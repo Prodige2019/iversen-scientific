@@ -1,0 +1,864 @@
+"""
+API — expose le moteur de correction (engine/) sur HTTP, pour l'appeler depuis
+n'importe quel client (web ici, Flutter plus tard : même contrat d'API).
+
+Lancer :
+    pip install -r requirements.txt
+    uvicorn app:app --reload --port 8000
+
+Puis ouvrir frontend/index.html dans un navigateur (il appelle localhost:8000).
+"""
+import concurrent.futures
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from engine import (
+    analyze, write_correction, correction_to_dict,
+    solve_equation, write_equation_correction,
+    solve_inequality, write_inequality_correction,
+    solve_system, write_system_correction,
+    analyze_sequence, write_sequence_correction,
+    analyze_binomial, write_binomial_correction,
+    analyze_complex, write_complex_correction,
+    analyze_matrix, compute_matrix_operation,
+    write_matrix_correction, write_matrix_operation_correction,
+    analyze_geometry, write_geometry_correction,
+    balance_equation, write_chemistry_correction,
+    analyze_circuit, write_circuit_correction,
+    analyze_kinematics, write_kinematics_correction,
+    analyze_thin_lens, write_optics_correction,
+    analyze_stoichiometry, write_stoichiometry_correction,
+    analyze_sensible_heat, analyze_latent_heat, write_thermodynamics_correction,
+)
+from ocr import extract_text, clean_text, to_canonical_expression, OcrParseError
+from ocr.reader import extract_line_candidates
+from export_engine import export_correction_to_pdf, export_correction_to_docx
+from plot_engine import plot_function_analysis_bytes, plot_function_analysis_data
+import history_store
+
+app = FastAPI(title="Iversen Scientific — Moteur de correction (Phase 1 + OCR)")
+
+# CORS ouvert : usage local de développement uniquement.
+# À restreindre à l'origine réelle de l'app avant toute mise en production.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Le moteur symbolique est déterministe mais certaines entrées transcendantes
+# pathologiques pourraient en théorie rendre un sous-calcul SymPy très lent.
+# On borne chaque requête dans le temps par défense en profondeur, en plus des
+# garde-fous déjà en place dans engine/functions.py (voir _domain_pieces).
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+REQUEST_TIMEOUT_SECONDS = 10
+
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 Mo, suffisant pour une photo de cahier compressée
+
+
+class CorrectionRequest(BaseModel):
+    function_str: str
+    exercise_title: str = "Étude de fonction"
+
+
+class EquationRequest(BaseModel):
+    equation_str: str
+    exercise_title: str = "Résolution d'équation"
+
+
+class InequalityRequest(BaseModel):
+    inequality_str: str
+    exercise_title: str = "Résolution d'inéquation"
+
+
+class SystemRequest(BaseModel):
+    equation1_str: str
+    equation2_str: str
+    exercise_title: str = "Résolution de système"
+
+
+class SequenceRequest(BaseModel):
+    first_term_str: str
+    recurrence_str: str
+    start_index: int = 0
+    exercise_title: str = "Étude de suite"
+
+
+class BinomialRequest(BaseModel):
+    n: int
+    p_str: str
+    k: Optional[int] = None
+    exercise_title: str = "Loi binomiale"
+
+
+class ComplexRequest(BaseModel):
+    z_str: str
+    exercise_title: str = "Étude d'un nombre complexe"
+
+
+class MatrixRequest(BaseModel):
+    rows: list
+    exercise_title: str = "Étude d'une matrice"
+
+
+class MatrixOperationRequest(BaseModel):
+    rows_a: list
+    rows_b: list
+    operation: str  # "somme" | "produit"
+    exercise_title: str = "Opération matricielle"
+
+
+class GeometryRequest(BaseModel):
+    A: list
+    B: list
+    C: Optional[list] = None
+    exercise_title: str = "Géométrie analytique"
+
+
+class ChemistryRequest(BaseModel):
+    equation_str: str
+    exercise_title: str = "Équilibrage d'équation chimique"
+
+
+class CircuitRequest(BaseModel):
+    resistances: list
+    topology: str  # "série" | "parallèle"
+    voltage: str
+    exercise_title: str = "Circuit électrique"
+
+
+class KinematicsRequest(BaseModel):
+    x0: str
+    v0: str
+    a: str
+    t: str
+    exercise_title: str = "Cinématique (MRUV)"
+
+
+class OpticsRequest(BaseModel):
+    f: str
+    OA: str
+    exercise_title: str = "Optique — lentille mince convergente"
+
+
+class StoichiometryRequest(BaseModel):
+    equation_str: str
+    known_compound: str
+    amount: str
+    amount_type: str  # "mol" | "g"
+    exercise_title: str = "Stœchiométrie"
+
+
+class ThermodynamicsRequest(BaseModel):
+    mode: str  # "sensible" | "latente"
+    mass: str
+    specific_heat: Optional[str] = None
+    t_initial: Optional[str] = None
+    t_final: Optional[str] = None
+    latent_heat: Optional[str] = None
+    exercise_title: str = "Calorimétrie"
+
+
+@app.get("/api/health")
+def health():
+    return {"status": "ok", "engine": "sympy", "llm_used": False, "ocr": "tesseract"}
+
+
+@app.post("/api/correct")
+def correct(req: CorrectionRequest):
+    def _run():
+        analysis = analyze(req.function_str)
+        return write_correction(req.exercise_title, req.function_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette fonction est trop complexe pour être analysée automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/solve-equation")
+def solve_equation_endpoint(req: EquationRequest):
+    def _run():
+        analysis = solve_equation(req.equation_str)
+        return write_equation_correction(req.exercise_title, req.equation_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette équation est trop complexe pour être résolue automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/solve-inequality")
+def solve_inequality_endpoint(req: InequalityRequest):
+    def _run():
+        analysis = solve_inequality(req.inequality_str)
+        return write_inequality_correction(req.exercise_title, req.inequality_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette inéquation est trop complexe pour être résolue automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/solve-system")
+def solve_system_endpoint(req: SystemRequest):
+    def _run():
+        analysis = solve_system(req.equation1_str, req.equation2_str)
+        return write_system_correction(req.exercise_title, req.equation1_str, req.equation2_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce système est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-sequence")
+def analyze_sequence_endpoint(req: SequenceRequest):
+    def _run():
+        analysis = analyze_sequence(req.first_term_str, req.recurrence_str, req.start_index)
+        return write_sequence_correction(req.exercise_title, req.first_term_str, req.recurrence_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette suite est trop complexe pour être étudiée automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-binomial")
+def analyze_binomial_endpoint(req: BinomialRequest):
+    def _run():
+        analysis = analyze_binomial(req.n, req.p_str, req.k)
+        return write_binomial_correction(req.exercise_title, req.n, req.p_str, req.k, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-complex")
+def analyze_complex_endpoint(req: ComplexRequest):
+    def _run():
+        analysis = analyze_complex(req.z_str)
+        return write_complex_correction(req.exercise_title, req.z_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-matrix")
+def analyze_matrix_endpoint(req: MatrixRequest):
+    def _run():
+        analysis = analyze_matrix(req.rows)
+        label = "M = " + str(req.rows)
+        return write_matrix_correction(req.exercise_title, label, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/matrix-operation")
+def matrix_operation_endpoint(req: MatrixOperationRequest):
+    def _run():
+        result = compute_matrix_operation(req.rows_a, req.rows_b, req.operation)
+        label = f"{req.operation}({req.rows_a}, {req.rows_b})"
+        return write_matrix_operation_correction(req.exercise_title, label, result)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette opération est trop complexe pour être résolue automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-geometry")
+def analyze_geometry_endpoint(req: GeometryRequest):
+    def _run():
+        analysis = analyze_geometry(req.A, req.B, req.C)
+        label = f"A={req.A}, B={req.B}" + (f", C={req.C}" if req.C else "")
+        return write_geometry_correction(req.exercise_title, label, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/balance-equation")
+def balance_equation_endpoint(req: ChemistryRequest):
+    def _run():
+        analysis = balance_equation(req.equation_str)
+        return write_chemistry_correction(req.exercise_title, req.equation_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette équation est trop complexe pour être équilibrée automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-circuit")
+def analyze_circuit_endpoint(req: CircuitRequest):
+    def _run():
+        analysis = analyze_circuit(req.resistances, req.topology, req.voltage)
+        label = f"{req.topology}({req.resistances}, U={req.voltage})"
+        return write_circuit_correction(req.exercise_title, label, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce circuit est trop complexe pour être analysé automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-kinematics")
+def analyze_kinematics_endpoint(req: KinematicsRequest):
+    def _run():
+        analysis = analyze_kinematics(req.x0, req.v0, req.a, req.t)
+        label = f"x0={req.x0}, v0={req.v0}, a={req.a}, t={req.t}"
+        return write_kinematics_correction(req.exercise_title, label, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce mouvement est trop complexe pour être analysé automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-optics")
+def analyze_optics_endpoint(req: OpticsRequest):
+    def _run():
+        analysis = analyze_thin_lens(req.f, req.OA)
+        label = f"f'={req.f}, OA={req.OA}"
+        return write_optics_correction(req.exercise_title, label, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-stoichiometry")
+def analyze_stoichiometry_endpoint(req: StoichiometryRequest):
+    def _run():
+        analysis = analyze_stoichiometry(req.equation_str, req.known_compound, req.amount, req.amount_type)
+        return write_stoichiometry_correction(
+            req.exercise_title, req.equation_str, req.known_compound, req.amount, req.amount_type, analysis
+        )
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-thermodynamics")
+def analyze_thermodynamics_endpoint(req: ThermodynamicsRequest):
+    def _run():
+        if req.mode == "sensible":
+            if not all([req.specific_heat, req.t_initial, req.t_final]):
+                raise ValueError("Le mode « sensible » requiert specific_heat, t_initial et t_final.")
+            analysis = analyze_sensible_heat(req.mass, req.specific_heat, req.t_initial, req.t_final)
+        elif req.mode == "latente":
+            if not req.latent_heat:
+                raise ValueError("Le mode « latente » requiert latent_heat.")
+            analysis = analyze_latent_heat(req.mass, req.latent_heat)
+        else:
+            raise ValueError(f"Mode inconnu : « {req.mode} » (attendu : « sensible » ou « latente »).")
+        return write_thermodynamics_correction(req.exercise_title, f"{req.mode}({req.mass})", analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/ocr")
+async def ocr(image: UploadFile = File(...)):
+    """Extrait le texte d'une photo/scan d'énoncé. Renvoie TOUJOURS le texte brut ET
+    une proposition d'expression nettoyée pour confirmation/édition par l'utilisateur
+    côté frontend — jamais envoyé directement au moteur de correction sans validation.
+
+    Limite honnête (voir README) : Tesseract est un OCR généraliste, pas spécialisé
+    maths. Le caractère « ^ » (exposant) est fréquemment mal lu (confondu avec « * »)
+    sur du texte imprimé compact. Une photo nette, texte imprimé sur une seule ligne,
+    fonctionne raisonnablement ; l'écriture manuscrite ou les fractions empilées non.
+    """
+    content = await image.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image trop volumineuse (max 8 Mo).")
+
+    with tempfile.NamedTemporaryFile(suffix=Path(image.filename or "upload.png").suffix or ".png") as tmp:
+        tmp.write(content)
+        tmp.flush()
+        try:
+            raw_text = extract_text(tmp.name, single_line=True)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Lecture de l'image impossible : {e}")
+
+    cleaned = clean_text(raw_text)
+    parse_error = None
+    canonical = None
+    try:
+        canonical = to_canonical_expression(raw_text)
+    except OcrParseError as e:
+        parse_error = str(e)
+
+    return {
+        "raw_text": raw_text,
+        "cleaned_text": cleaned,
+        "suggested_function_str": canonical,  # None si le parsing a échoué
+        "parse_error": parse_error,
+        "note": (
+            "Vérifiez toujours ce texte avant de lancer la correction : l'OCR "
+            "généraliste confond parfois « ^ » (exposant) avec « * »."
+        ),
+    }
+
+
+@app.post("/api/ocr-page")
+async def ocr_page(image: UploadFile = File(...)):
+    """Pour une photo pleine page (énoncé pas pré-recadré) : détecte toutes les
+    lignes de texte et les classe par vraisemblance d'être l'expression
+    mathématique recherchée (plutôt qu'une consigne ou du texte environnant).
+    Ne choisit jamais à la place de l'utilisateur — renvoie les meilleurs
+    candidats, chacun passé au même nettoyage/parsing que /api/ocr, pour
+    sélection et confirmation côté frontend."""
+    content = await image.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image trop volumineuse (max 8 Mo).")
+
+    with tempfile.NamedTemporaryFile(suffix=Path(image.filename or "upload.png").suffix or ".png") as tmp:
+        tmp.write(content)
+        tmp.flush()
+        try:
+            candidates = extract_line_candidates(tmp.name)
+        except Exception as e:
+            raise HTTPException(status_code=422, detail=f"Lecture de l'image impossible : {e}")
+
+    enriched = []
+    for c in candidates:
+        cleaned = clean_text(c["text"])
+        suggested, parse_error = None, None
+        try:
+            suggested = to_canonical_expression(c["text"])
+        except OcrParseError as e:
+            parse_error = str(e)
+        enriched.append({
+            "raw_text": c["text"],
+            "cleaned_text": cleaned,
+            "math_likelihood": c["score"],
+            "suggested_function_str": suggested,
+            "parse_error": parse_error,
+            "bbox": c["bbox"],
+        })
+
+    return {
+        "candidates": enriched,
+        "note": (
+            "Plusieurs lignes ont été détectées sur la photo ; la plus probable est "
+            "en tête de liste, mais vérifiez toujours avant de lancer la correction."
+        ),
+    }
+
+
+@app.post("/api/plot-data")
+def plot_data_endpoint(req: CorrectionRequest):
+    """Version JSON du graphique (mêmes données que /api/plot, mais pour un
+    rendu interactif côté frontend au lieu d'une image PNG statique)."""
+    def _run():
+        analysis = analyze(req.function_str)
+        return plot_function_analysis_data(analysis, req.function_str)
+
+    try:
+        future = _executor.submit(_run)
+        data = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce graphique est trop complexe pour être généré automatiquement dans le temps imparti.",
+        )
+    return data
+
+
+@app.post("/api/plot")
+def plot_endpoint(req: CorrectionRequest):
+    def _run():
+        analysis = analyze(req.function_str)
+        return plot_function_analysis_bytes(analysis, req.function_str)
+
+    try:
+        future = _executor.submit(_run)
+        png_bytes = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce graphique est trop complexe pour être généré automatiquement dans le temps imparti.",
+        )
+    return Response(content=png_bytes, media_type="image/png")
+
+
+@app.post("/api/export-pdf")
+def export_pdf_endpoint(correction: dict):
+    """Reçoit le dict de correction déjà calculé (tel que renvoyé par n'importe lequel
+    des endpoints /api/correct, /api/solve-equation, etc. — le frontend le renvoie tel
+    quel après un premier appel) et produit un PDF téléchargeable. Générique sur les
+    6 types d'exercice : le rendu ne dépend que de la structure Step/Correction, pas
+    du type d'exercice d'origine."""
+    if "steps" not in correction:
+        raise HTTPException(status_code=400, detail="Correction invalide : champ 'steps' manquant.")
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp.close()
+    try:
+        export_correction_to_pdf(correction, tmp.name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Échec de la génération du PDF : {e}")
+    filename = (correction.get("exercise_title") or "correction").replace(" ", "_").replace("/", "-") + ".pdf"
+    return FileResponse(tmp.name, media_type="application/pdf", filename=filename)
+
+
+@app.post("/api/export-docx")
+def export_docx_endpoint(correction: dict):
+    """Même principe que /api/export-pdf, pour un document Word."""
+    if "steps" not in correction:
+        raise HTTPException(status_code=400, detail="Correction invalide : champ 'steps' manquant.")
+    tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+    tmp.close()
+    try:
+        export_correction_to_docx(correction, tmp.name)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Échec de la génération du DOCX : {e}")
+    filename = (correction.get("exercise_title") or "correction").replace(" ", "_").replace("/", "-") + ".docx"
+    return FileResponse(
+        tmp.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=filename,
+    )
+
+
+@app.get("/api/thermodynamics-examples")
+def thermodynamics_examples():
+    return [
+        {"title": "Chauffer 500g d'eau (20→100°C)", "mode": "sensible", "mass": "500", "specific_heat": "4.18", "t_initial": "20", "t_final": "100"},
+        {"title": "Refroidir 200g d'eau (80→20°C)", "mode": "sensible", "mass": "200", "specific_heat": "4.18", "t_initial": "80", "t_final": "20"},
+        {"title": "Vaporiser 100g d'eau", "mode": "latente", "mass": "100", "latent_heat": "2257"},
+    ]
+
+
+@app.get("/api/stoichiometry-examples")
+def stoichiometry_examples():
+    return [
+        {"title": "Combustion du méthane (16g CH4)", "equation_str": "CH4 + O2 -> CO2 + H2O", "known_compound": "CH4", "amount": "16", "amount_type": "g"},
+        {"title": "Formation de l'eau (2 mol H2)", "equation_str": "H2 + O2 -> H2O", "known_compound": "H2", "amount": "2", "amount_type": "mol"},
+    ]
+
+
+@app.get("/api/optics-examples")
+def optics_examples():
+    return [
+        {"title": "Image réelle (objet loin)", "f": "10", "OA": "-30"},
+        {"title": "Loupe (objet proche)", "f": "10", "OA": "-5"},
+    ]
+
+
+@app.get("/api/kinematics-examples")
+def kinematics_examples():
+    return [
+        {"title": "Freinage (décélération)", "x0": "0", "v0": "20", "a": "-2", "t": "3"},
+        {"title": "Accélération depuis l'arrêt", "x0": "0", "v0": "0", "a": "2", "t": "5"},
+        {"title": "Chute libre (g=9.8)", "x0": "0", "v0": "0", "a": "9.8", "t": "2"},
+    ]
+
+
+@app.get("/api/circuit-examples")
+def circuit_examples():
+    return [
+        {"title": "3 résistances en série", "resistances": ["10", "20", "30"], "topology": "série", "voltage": "12"},
+        {"title": "3 résistances en parallèle", "resistances": ["10", "20", "30"], "topology": "parallèle", "voltage": "12"},
+    ]
+
+
+@app.get("/api/chemistry-examples")
+def chemistry_examples():
+    return [
+        {"title": "Formation de l'eau", "equation_str": "H2 + O2 -> H2O"},
+        {"title": "Combustion du méthane", "equation_str": "CH4 + O2 -> CO2 + H2O"},
+        {"title": "Oxydation de l'aluminium", "equation_str": "Al + O2 -> Al2O3"},
+        {"title": "Réduction de l'oxyde de fer", "equation_str": "Fe2O3 + CO -> Fe + CO2"},
+    ]
+
+
+@app.get("/api/geometry-examples")
+def geometry_examples():
+    return [
+        {"title": "Triangle rectangle en A", "A": [0, 0], "B": [1, 0], "C": [0, 1]},
+        {"title": "Points alignés", "A": [0, 0], "B": [1, 1], "C": [2, 2]},
+        {"title": "Distance/milieu simple", "A": [1, 2], "B": [4, 6], "C": None},
+    ]
+
+
+@app.get("/api/matrix-examples")
+def matrix_examples():
+    return [
+        {"title": "2×2 inversible", "rows": [["1", "2"], ["3", "4"]]},
+        {"title": "3×3 singulière", "rows": [["1", "0", "0"], ["0", "1", "0"], ["0", "0", "0"]]},
+    ]
+
+
+@app.get("/api/complex-examples")
+def complex_examples():
+    return [
+        {"title": "1 + i (angle remarquable)", "z_str": "1 + I"},
+        {"title": "3 + 4i", "z_str": "3 + 4*I"},
+        {"title": "-1 - i√3", "z_str": "-1 - I*sqrt(3)"},
+    ]
+
+
+@app.get("/api/binomial-examples")
+def binomial_examples():
+    return [
+        {"title": "B(5, 1/3), k=2", "n": 5, "p_str": "1/3", "k": 2},
+        {"title": "B(10, 0.2), k=3", "n": 10, "p_str": "0.2", "k": 3},
+        {"title": "B(6, 0.4), k=3", "n": 6, "p_str": "0.4", "k": 3},
+    ]
+
+
+@app.get("/api/sequence-examples")
+def sequence_examples():
+    return [
+        {"title": "Arithmétique", "first_term_str": "2", "recurrence_str": "u + 3"},
+        {"title": "Géométrique (convergente)", "first_term_str": "10", "recurrence_str": "0.5*u"},
+        {"title": "Géométrique (divergente)", "first_term_str": "3", "recurrence_str": "2*u"},
+        {"title": "Arithmético-géométrique", "first_term_str": "1", "recurrence_str": "2*u + 3"},
+    ]
+
+
+@app.get("/api/system-examples")
+def system_examples():
+    return [
+        {"title": "Solution unique", "equation1_str": "2*x + y = 5", "equation2_str": "x - y = 1"},
+        {"title": "Aucune solution", "equation1_str": "2*x + y = 5", "equation2_str": "2*x + y = 3"},
+        {"title": "Infinité de solutions", "equation1_str": "2*x + y = 5", "equation2_str": "4*x + 2*y = 10"},
+    ]
+
+
+@app.get("/api/inequality-examples")
+def inequality_examples():
+    return [
+        {"title": "Linéaire", "inequality_str": "2*x - 4 > 0"},
+        {"title": "Quadratique (Δ > 0)", "inequality_str": "x**2 - 5*x + 6 > 0"},
+        {"title": "Quadratique (Δ = 0)", "inequality_str": "x**2 - 4*x + 4 <= 0"},
+        {"title": "Quadratique (Δ < 0)", "inequality_str": "x**2 + x + 1 > 0"},
+    ]
+
+
+@app.get("/api/equation-examples")
+def equation_examples():
+    return [
+        {"title": "Linéaire", "equation_str": "2*x + 4 = 0"},
+        {"title": "Quadratique (Δ > 0)", "equation_str": "x**2 - 5*x + 6 = 0"},
+        {"title": "Quadratique (Δ = 0)", "equation_str": "x**2 - 4*x + 4 = 0"},
+        {"title": "Quadratique (Δ < 0)", "equation_str": "x**2 + x + 1 = 0"},
+        {"title": "Degré 3", "equation_str": "x**3 - 8 = 0"},
+    ]
+
+
+@app.get("/api/examples")
+def examples():
+    """Quelques fonctions prêtes à l'emploi pour tester rapidement le front."""
+    return [
+        {"title": "Polynôme du 3e degré", "function_str": "x**3 - 3*x + 2"},
+        {"title": "Fraction rationnelle", "function_str": "(2*x + 1)/(x - 1)"},
+        {"title": "Fonction paire", "function_str": "x**4 - 2*x**2"},
+        {"title": "Exponentielle", "function_str": "exp(x) - 2"},
+        {"title": "Logarithme", "function_str": "log(x)"},
+        {"title": "Trigonométrique (sinus)", "function_str": "sin(x)"},
+        {"title": "Valeur absolue", "function_str": "Abs(x - 2)"},
+        {"title": "Fonction par morceaux", "function_str": "Piecewise((x**2, x < 1), (2*x - 1, True))"},
+    ]
+
+
+class HistoryEntryRequest(BaseModel):
+    exercise_type: str
+    exercise_type_label: str
+    title: str
+    summary: str
+    payload: dict
+    score: Optional[int] = None
+    score_max: Optional[int] = None
+
+
+@app.post("/api/history")
+def save_history_entry(req: HistoryEntryRequest):
+    """Enregistre une correction dans l'historique local (SQLite). Appelé
+    automatiquement par le frontend après chaque correction affichée."""
+    entry_id = history_store.save_entry(
+        exercise_type=req.exercise_type,
+        exercise_type_label=req.exercise_type_label,
+        title=req.title,
+        summary=req.summary,
+        payload=req.payload,
+        score=req.score,
+        score_max=req.score_max,
+    )
+    return {"id": entry_id}
+
+
+@app.get("/api/history")
+def list_history(limit: int = 200):
+    return {"entries": history_store.list_entries(limit=limit)}
+
+
+@app.get("/api/history/{entry_id}")
+def get_history_entry(entry_id: int):
+    entry = history_store.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entrée d'historique introuvable.")
+    return entry
+
+
+@app.delete("/api/history/{entry_id}")
+def delete_history_entry(entry_id: int):
+    deleted = history_store.delete_entry(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entrée d'historique introuvable.")
+    return {"deleted": True}
+
+
+@app.delete("/api/history")
+def clear_history():
+    count = history_store.clear_all()
+    return {"deleted_count": count}
+
+
+# IMPORTANT : ce mount doit rester la toute dernière ligne du fichier. StaticFiles
+# capte "/" et tout ce qui n'est pas déjà une route déclarée au-dessus — le déclarer
+# avant les routes /api/... les rendrait inaccessibles (FastAPI/Starlette résout
+# dans l'ordre de déclaration). Grâce à ça, une seule commande (`uvicorn app:app`)
+# suffit : ouvrir http://localhost:8000 sert directement le frontend.
+_frontend_dir = Path(__file__).parent / "frontend"
+app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="frontend")

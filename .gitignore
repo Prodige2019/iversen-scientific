@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Données locales (historique des exercices — propre à chaque installation)
+iversen_engine/data/history.db
+
+# Rust (native_cas)
+native_cas/target/
+iversen_engine/native_cas/target/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Flutter / Dart (une fois iversen_mobile/ créé avec `flutter create`)
+iversen_mobile/build/
+iversen_mobile/.dart_tool/
+iversen_mobile/.flutter-plugins
+iversen_mobile/.flutter-plugins-dependencies
+
+# OS
+.DS_Store
+Thumbs.db

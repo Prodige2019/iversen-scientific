@@ -1,0 +1,1633 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Iversen Scientific — Correction en direct</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="/vendor/plotly-basic.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=Caveat:wght@600;700&display=swap');
+
+  :root{
+    --paper: #FAF6EE; --paper-grid:#C9D9E8; --ink:#1B2A45; --ink-soft:#4B5A73;
+    --red:#B23A2F; --gold:#B8912B; --gold-soft:#F1E6C4; --green:#3E7A52;
+    --card:#FFFFFF; --line:#E4DCC9;
+    --shadow: 0 1px 2px rgba(27,42,69,.04);
+    --surface-soft:#FDFCF8; --surface-muted:#F3EFE4; --surface-hover:#FCF6E3;
+    --success-bg:#EEF3F0; --error-bg:#F7E9E7; --warning-text:#8A3B2F;
+    --math-bg:#F6F3EA; --badge-border:#E3CE8C; --badge-text:#8A6A15;
+    --mark-grad-end:#2C4468;
+  }
+  html[data-theme="dark"]{
+    --paper:#141B2A; --paper-grid:#2A3A57; --ink:#EDEFF5; --ink-soft:#A9B4C9;
+    --red:#E06A5C; --gold:#E0BE6D; --gold-soft:#3A331E; --green:#6FBE8C;
+    --card:#1C2438; --line:#2E3B57;
+    --shadow: 0 1px 3px rgba(0,0,0,.35);
+    --surface-soft:#232C42; --surface-muted:#232C42; --surface-hover:#2A3350;
+    --success-bg:#1E2E27; --error-bg:#3A2420; --warning-text:#E39184;
+    --math-bg:#1E2740; --badge-border:#5C4B25; --badge-text:#E0BE6D;
+    --mark-grad-end:#3A5482;
+  }
+  html{ transition: background-color .2s ease; }
+  body{ transition: background-color .2s ease, color .2s ease; }
+  .input-card, .correction-panel, .example-chip, .candidate-item, .math, .rule-recall, .warning{
+    transition: background-color .2s ease, border-color .2s ease, color .2s ease;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{ background:var(--paper); font-family:'Inter',sans-serif; color:var(--ink); padding:32px; }
+  .app{ max-width:1180px; margin:0 auto; }
+
+  header{ display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:24px; padding-bottom:16px; border-bottom:2px solid var(--ink); }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .mark{ width:38px; height:38px; border-radius:9px; background:linear-gradient(155deg,var(--ink),var(--mark-grad-end)); display:flex; align-items:center; justify-content:center; color:var(--gold-soft); font-family:'Fraunces',serif; font-weight:700; font-size:19px; }
+  .brand-name{ font-family:'Fraunces',serif; font-weight:600; font-size:22px; }
+  .brand-sub{ font-size:11.5px; color:var(--ink-soft); letter-spacing:.08em; text-transform:uppercase; margin-top:1px; }
+  .status{ font-size:12px; padding:6px 12px; border-radius:100px; background:var(--success-bg); color:var(--green); font-weight:600; }
+  .status.off{ background:var(--error-bg); color:var(--red); }
+  .header-actions{ display:flex; align-items:center; gap:12px; }
+  .theme-toggle{
+    width:38px; height:38px; border-radius:10px; border:1px solid var(--line); background:var(--card);
+    color:var(--ink-soft); cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center;
+  }
+  .theme-toggle:hover{ border-color:var(--gold); color:var(--ink); }
+
+  .tab-groups{ margin-bottom:18px; }
+  .tab-group{ margin-bottom:2px; }
+  .tab-group-label{
+    font-size:10.5px; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--ink-soft); opacity:.7; margin:10px 0 6px 2px;
+  }
+  .tab-group:first-child .tab-group-label{ margin-top:0; }
+  .tab-group-row{ display:flex; gap:6px; flex-wrap:wrap; border-bottom:1px solid var(--line); padding-bottom:8px; }
+
+  .input-card{
+    background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin-bottom:22px;
+    display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+  }
+  .input-card label{ font-size:13px; color:var(--ink-soft); font-weight:600; }
+  .input-card input[type=text]{
+    flex:1; min-width:260px; font-family:'Fraunces',serif; font-size:17px; padding:10px 14px;
+    border:1px solid var(--line); border-radius:9px; background:var(--surface-soft); color:var(--ink);
+  }
+  .btn{ font-size:13.5px; font-weight:600; padding:10px 18px; border-radius:9px; border:none; cursor:pointer; }
+  .btn-primary{ background:var(--ink); color:var(--paper); }
+  .btn-ghost{ background:transparent; color:var(--ink-soft); border:1px solid var(--line); }
+  .examples{ display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .example-chip{
+    font-size:12px; padding:6px 12px; border-radius:100px; background:var(--surface-muted); color:var(--ink-soft);
+    cursor:pointer; border:1px solid transparent;
+  }
+  .example-chip:hover{ border-color:var(--gold); color:var(--ink); }
+
+  .tabs{ display:flex; gap:6px; margin-bottom:18px; flex-wrap:wrap; }
+  .tab-btn{
+    font-size:13.5px; font-weight:600; color:var(--ink-soft); background:transparent; border:none;
+    padding:10px 16px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  .tab-btn:hover{ color:var(--ink); }
+  .tab-btn.active{ color:var(--ink); border-bottom-color:var(--red); }
+  .tab-panel{ display:none; }
+  .tab-panel.active{ display:block; }
+  .candidate-item{
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    padding:10px 14px; border:1px solid var(--line); border-radius:9px; cursor:pointer;
+    font-family:'Fraunces',serif; font-size:15px; background:var(--surface-soft);
+  }
+  .candidate-item:hover{ border-color:var(--gold); background:var(--surface-hover); }
+  .candidate-score{ font-family:'Inter',sans-serif; font-size:11px; padding:3px 9px; border-radius:100px; background:var(--success-bg); color:var(--green); white-space:nowrap; }
+  .candidate-score.low{ background:var(--surface-muted); color:var(--ink-soft); }
+
+  .correction-panel{ background:var(--card); border-radius:14px; border:1px solid var(--line); min-height:120px; }
+  .correction-head{ padding:20px 24px; display:flex; justify-content:space-between; align-items:flex-start; border-bottom:1px solid var(--line); }
+  .correction-head h2{ font-family:'Fraunces',serif; font-size:19px; font-weight:600; }
+  .correction-head p{ font-size:13px; color:var(--ink-soft); margin-top:4px; }
+  .score-badge{ text-align:center; background:linear-gradient(160deg,var(--surface-hover),var(--gold-soft)); border:1px solid var(--badge-border); border-radius:12px; padding:10px 18px; min-width:84px; }
+  .score-badge .num{ font-family:'Fraunces',serif; font-size:24px; font-weight:700; color:var(--badge-text); line-height:1; }
+  .score-badge .label{ font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--badge-text); margin-top:3px; }
+
+  .steps{ padding:22px 24px 18px; }
+  .step{ display:grid; grid-template-columns:30px 1fr; gap:14px; padding-bottom:22px; position:relative; }
+  .step:not(:last-child)::before{ content:''; position:absolute; left:14px; top:30px; bottom:0; width:1.5px; background:var(--line); }
+  .step-num{ width:30px; height:30px; border-radius:50%; background:var(--green); color:var(--paper); font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; font-family:'Fraunces',serif; }
+  .step-title{ font-weight:600; font-size:14.5px; margin-bottom:6px; }
+  .step-body{ font-size:13.5px; color:var(--ink-soft); line-height:1.6; }
+  .math{ font-family:'Fraunces',serif; color:var(--ink); background:var(--math-bg); border-radius:6px; padding:12px 14px; margin:8px 0; font-size:15px; overflow-x:auto; }
+  .rule-recall{ font-size:12.5px; color:var(--ink-soft); background:var(--success-bg); border-left:3px solid var(--green); padding:8px 12px; border-radius:6px; margin-top:8px; }
+  .warning{ font-size:12.5px; color:var(--warning-text); background:var(--error-bg); border-left:3px solid var(--red); padding:8px 12px; border-radius:6px; margin-top:8px; }
+
+  .empty, .error{ padding:40px 24px; text-align:center; color:var(--ink-soft); font-size:14px; }
+  .error{ color:var(--red); }
+  .loading{ padding:40px 24px; text-align:center; color:var(--ink-soft); font-family:'Fraunces',serif; font-style:italic; }
+
+  .plot-wrap{ border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--card); }
+  .plot-legend{ display:flex; gap:16px; flex-wrap:wrap; padding:10px 16px; border-top:1px solid var(--line); font-size:11.5px; color:var(--ink-soft); }
+  .plot-legend span{ display:flex; align-items:center; gap:6px; }
+  .plot-legend i{ width:10px; height:10px; border-radius:50%; display:inline-block; }
+
+  .guided-toggle{ display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--ink-soft); cursor:pointer; user-select:none; white-space:nowrap; }
+  .guided-toggle input{ width:15px; height:15px; accent-color: var(--gold); cursor:pointer; }
+
+  .step.step-locked{ opacity:.75; }
+  .step-reveal-btn{ margin-top:6px; font-size:12.5px; padding:6px 12px; }
+
+  .history-card{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:14px 18px; margin-bottom:8px; background:var(--card); border:1px solid var(--line);
+    border-radius:10px; cursor:pointer; transition:border-color .15s ease;
+  }
+  .history-card:hover{ border-color:var(--gold); }
+  .history-card-title{ font-weight:600; color:var(--ink); font-size:14.5px; }
+  .history-card-meta{ font-size:12px; color:var(--ink-soft); margin-top:2px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">
+      <div class="mark">IS</div>
+      <div>
+        <div class="brand-name">Iversen Scientific</div>
+        <div class="brand-sub">Moteur de correction — Phase 1</div>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Changer de thème" aria-label="Changer de thème">🌙</button>
+      <div id="status" class="status">Vérification du moteur…</div>
+    </div>
+  </header>
+
+  <div class="tab-groups">
+    <div class="tab-group">
+      <div class="tab-group-label">Mathématiques</div>
+      <div class="tabs tab-group-row">
+        <button class="tab-btn active" data-tab="function" onclick="switchTab('function')">Étude de fonction</button>
+        <button class="tab-btn" data-tab="equation" onclick="switchTab('equation')">Équation</button>
+        <button class="tab-btn" data-tab="inequality" onclick="switchTab('inequality')">Inéquation</button>
+        <button class="tab-btn" data-tab="system" onclick="switchTab('system')">Système</button>
+        <button class="tab-btn" data-tab="sequence" onclick="switchTab('sequence')">Suite</button>
+        <button class="tab-btn" data-tab="binomial" onclick="switchTab('binomial')">Loi binomiale</button>
+        <button class="tab-btn" data-tab="complex" onclick="switchTab('complex')">Complexes</button>
+        <button class="tab-btn" data-tab="matrix" onclick="switchTab('matrix')">Matrices</button>
+        <button class="tab-btn" data-tab="geometry" onclick="switchTab('geometry')">Géométrie</button>
+      </div>
+    </div>
+    <div class="tab-group">
+      <div class="tab-group-label">Physique — Chimie</div>
+      <div class="tabs tab-group-row">
+        <button class="tab-btn" data-tab="chemistry" onclick="switchTab('chemistry')">Chimie</button>
+        <button class="tab-btn" data-tab="circuit" onclick="switchTab('circuit')">Électricité</button>
+        <button class="tab-btn" data-tab="kinematics" onclick="switchTab('kinematics')">Cinématique</button>
+        <button class="tab-btn" data-tab="optics" onclick="switchTab('optics')">Optique</button>
+        <button class="tab-btn" data-tab="stoichiometry" onclick="switchTab('stoichiometry')">Stœchiométrie</button>
+        <button class="tab-btn" data-tab="thermo" onclick="switchTab('thermo')">Thermo</button>
+      </div>
+    </div>
+    <div class="tab-group">
+      <div class="tab-group-label">Saisie</div>
+      <div class="tabs tab-group-row" style="border-bottom:none;">
+        <button class="tab-btn" data-tab="photo" onclick="switchTab('photo')">📷 Photo</button>
+      </div>
+    </div>
+    <div class="tab-group">
+      <div class="tab-group-label">Suivi</div>
+      <div class="tabs tab-group-row" style="border-bottom:none;">
+        <button class="tab-btn" data-tab="history" onclick="switchTab('history'); loadHistory();">🕘 Historique</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel active" id="tab-function">
+    <div class="input-card">
+      <label for="fn">f(x) =</label>
+      <input type="text" id="fn" value="x**3 - 3*x + 2" spellcheck="false">
+      <button class="btn btn-primary" onclick="runCorrection()">Corriger</button>
+      <div class="examples" id="examples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-equation">
+    <div class="input-card">
+      <label for="eq">Équation :</label>
+      <input type="text" id="eq" value="x**2 - 5*x + 6 = 0" spellcheck="false">
+      <button class="btn btn-primary" onclick="runEquation()">Résoudre</button>
+      <div class="examples" id="equationExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-inequality">
+    <div class="input-card">
+      <label for="ineq">Inéquation :</label>
+      <input type="text" id="ineq" value="x**2 - 5*x + 6 > 0" spellcheck="false">
+      <button class="btn btn-primary" onclick="runInequality()">Résoudre</button>
+      <div class="examples" id="inequalityExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-system">
+    <div class="input-card">
+      <label for="sys1">Système :</label>
+      <input type="text" id="sys1" value="2*x + y = 5" spellcheck="false" style="max-width:220px;">
+      <input type="text" id="sys2" value="x - y = 1" spellcheck="false" style="max-width:220px;">
+      <button class="btn btn-primary" onclick="runSystem()">Résoudre</button>
+      <div class="examples" id="systemExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-sequence">
+    <div class="input-card">
+      <label for="seqU0">Suite : u₀ =</label>
+      <input type="text" id="seqU0" value="2" spellcheck="false" style="max-width:100px;">
+      <label for="seqRec">u_(n+1) =</label>
+      <input type="text" id="seqRec" value="u + 3" spellcheck="false" style="max-width:180px;">
+      <button class="btn btn-primary" onclick="runSequence()">Étudier</button>
+      <div class="examples" id="sequenceExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-binomial">
+    <div class="input-card">
+      <label for="binN">Binomiale : n =</label>
+      <input type="text" id="binN" value="5" spellcheck="false" style="max-width:70px;">
+      <label for="binP">p =</label>
+      <input type="text" id="binP" value="1/3" spellcheck="false" style="max-width:90px;">
+      <label for="binK">k =</label>
+      <input type="text" id="binK" value="2" spellcheck="false" style="max-width:70px;">
+      <button class="btn btn-primary" onclick="runBinomial()">Calculer</button>
+      <div class="examples" id="binomialExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-complex">
+    <div class="input-card">
+      <label for="cplxZ">z =</label>
+      <input type="text" id="cplxZ" value="1 + I" spellcheck="false" style="max-width:180px;">
+      <button class="btn btn-primary" onclick="runComplex()">Étudier</button>
+      <div class="examples" id="complexExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-matrix">
+    <div class="input-card">
+      <label for="matA">A =</label>
+      <input type="text" id="matA" value="1,2;3,4" spellcheck="false" style="max-width:160px;" placeholder="1,2;3,4">
+      <label for="matB">B =</label>
+      <input type="text" id="matB" value="5,6;7,8" spellcheck="false" style="max-width:160px;" placeholder="5,6;7,8">
+      <select id="matOp" style="padding:8px; border-radius:8px; border:1px solid var(--line);">
+        <option value="analyze">Analyser A</option>
+        <option value="somme">A + B</option>
+        <option value="produit">A × B</option>
+      </select>
+      <button class="btn btn-primary" onclick="runMatrix()">Calculer</button>
+      <div class="examples" id="matrixExamples"></div>
+    </div>
+    <div class="input-card" style="font-size:12px; color:var(--ink-soft);">
+      Format : lignes séparées par « ; », coefficients séparés par « , » — ex. <code>1,2;3,4</code> pour une matrice 2×2.
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-geometry">
+    <div class="input-card">
+      <label for="geoA">A(x;y) =</label>
+      <input type="text" id="geoA" value="0,0" spellcheck="false" style="max-width:90px;">
+      <label for="geoB">B =</label>
+      <input type="text" id="geoB" value="1,0" spellcheck="false" style="max-width:90px;">
+      <label for="geoC">C (optionnel) =</label>
+      <input type="text" id="geoC" value="0,1" spellcheck="false" style="max-width:90px;">
+      <button class="btn btn-primary" onclick="runGeometry()">Étudier</button>
+      <div class="examples" id="geometryExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-chemistry">
+    <div class="input-card">
+      <label for="chemEq">Équation :</label>
+      <input type="text" id="chemEq" value="CH4 + O2 -> CO2 + H2O" spellcheck="false" style="max-width:260px;">
+      <button class="btn btn-primary" onclick="runChemistry()">Équilibrer</button>
+      <div class="examples" id="chemistryExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-circuit">
+    <div class="input-card">
+      <label for="circR">R (Ω, séparées par «,») =</label>
+      <input type="text" id="circR" value="10,20,30" spellcheck="false" style="max-width:150px;">
+      <select id="circTopo" style="padding:8px; border-radius:8px; border:1px solid var(--line);">
+        <option value="série">Série</option>
+        <option value="parallèle">Parallèle</option>
+      </select>
+      <label for="circU">U (V) =</label>
+      <input type="text" id="circU" value="12" spellcheck="false" style="max-width:70px;">
+      <button class="btn btn-primary" onclick="runCircuit()">Calculer</button>
+      <div class="examples" id="circuitExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-kinematics">
+    <div class="input-card">
+      <label for="kinX0">x₀ =</label>
+      <input type="text" id="kinX0" value="0" spellcheck="false" style="max-width:70px;">
+      <label for="kinV0">v₀ =</label>
+      <input type="text" id="kinV0" value="20" spellcheck="false" style="max-width:70px;">
+      <label for="kinA">a =</label>
+      <input type="text" id="kinA" value="-2" spellcheck="false" style="max-width:70px;">
+      <label for="kinT">t =</label>
+      <input type="text" id="kinT" value="3" spellcheck="false" style="max-width:70px;">
+      <button class="btn btn-primary" onclick="runKinematics()">Calculer</button>
+      <div class="examples" id="kinematicsExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-optics">
+    <div class="input-card">
+      <label for="optF">f' (cm) =</label>
+      <input type="text" id="optF" value="10" spellcheck="false" style="max-width:80px;">
+      <label for="optOA">OA (cm, négatif) =</label>
+      <input type="text" id="optOA" value="-30" spellcheck="false" style="max-width:90px;">
+      <button class="btn btn-primary" onclick="runOptics()">Calculer</button>
+      <div class="examples" id="opticsExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-stoichiometry">
+    <div class="input-card">
+      <label for="stoEq">Équation :</label>
+      <input type="text" id="stoEq" value="CH4 + O2 -> CO2 + H2O" spellcheck="false" style="max-width:220px;">
+      <label for="stoCompound">Composé connu :</label>
+      <input type="text" id="stoCompound" value="CH4" spellcheck="false" style="max-width:80px;">
+      <label for="stoAmount">Quantité :</label>
+      <input type="text" id="stoAmount" value="16" spellcheck="false" style="max-width:70px;">
+      <select id="stoType" style="padding:8px; border-radius:8px; border:1px solid var(--line);">
+        <option value="g">g</option>
+        <option value="mol">mol</option>
+      </select>
+      <button class="btn btn-primary" onclick="runStoichiometry()">Calculer</button>
+      <div class="examples" id="stoichiometryExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-thermo">
+    <div class="input-card">
+      <select id="thermoMode" onchange="updateThermoFields()" style="padding:8px; border-radius:8px; border:1px solid var(--line);">
+        <option value="sensible">Chaleur sensible (Q=mcΔT)</option>
+        <option value="latente">Chaleur latente (Q=mL)</option>
+      </select>
+      <label for="thermoMass">m (g) =</label>
+      <input type="text" id="thermoMass" value="500" spellcheck="false" style="max-width:70px;">
+      <span id="thermoSensibleFields">
+        <label for="thermoC">c (J/g/K) =</label>
+        <input type="text" id="thermoC" value="4.18" spellcheck="false" style="max-width:70px;">
+        <label for="thermoTi">Ti (°C) =</label>
+        <input type="text" id="thermoTi" value="20" spellcheck="false" style="max-width:60px;">
+        <label for="thermoTf">Tf (°C) =</label>
+        <input type="text" id="thermoTf" value="100" spellcheck="false" style="max-width:60px;">
+      </span>
+      <span id="thermoLatentFields" style="display:none;">
+        <label for="thermoL">L (J/g) =</label>
+        <input type="text" id="thermoL" value="2257" spellcheck="false" style="max-width:80px;">
+      </span>
+      <button class="btn btn-primary" onclick="runThermo()">Calculer</button>
+    </div>
+    <div class="input-card">
+      <div class="examples" id="thermoExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-photo">
+    <div class="input-card">
+      <span style="font-size:13px; color:var(--ink-soft);">Photo d'un exercice — le texte lu te sera présenté pour confirmation avant toute correction.</span>
+    </div>
+    <div class="input-card">
+      <label class="btn btn-ghost" style="cursor:pointer;">
+        📷 Photo recadrée sur une ligne
+        <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhoto(event)">
+      </label>
+      <label class="btn btn-ghost" style="cursor:pointer;">
+        📄 Photo pleine page
+        <input type="file" id="pagePhotoInput" accept="image/*" style="display:none" onchange="handlePagePhoto(event)">
+      </label>
+    </div>
+  </div>
+
+  <div id="ocrCandidates" style="display:none;" class="input-card" style="flex-direction:column; align-items:stretch;">
+    <div style="font-size:13px; color:var(--ink-soft); font-weight:600; margin-bottom:8px;">
+      Plusieurs lignes détectées — choisis celle qui contient l'exercice :
+    </div>
+    <div id="candidatesList" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <button class="btn btn-ghost" style="margin-top:10px; align-self:flex-start;" onclick="document.getElementById('ocrCandidates').style.display='none'">Annuler</button>
+  </div>
+
+  <div id="ocrReview" style="display:none;" class="input-card" style="flex-direction:column; align-items:stretch;">
+    <div style="font-size:13px; color:var(--ink-soft); font-weight:600; margin-bottom:8px;">
+      Texte lu sur la photo — vérifiez/corrigez avant de lancer la correction :
+    </div>
+    <input type="text" id="ocrText" style="font-family:'Fraunces',serif; font-size:16px; padding:10px 14px; border:1px solid var(--line); border-radius:9px; background:var(--surface-soft); margin-bottom:10px;">
+    <div id="ocrWarning" style="font-size:12.5px; color:var(--red); margin-bottom:10px;"></div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn btn-primary" onclick="submitOcrText()">Utiliser ce texte</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('ocrReview').style.display='none'">Annuler</button>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-history">
+    <div class="input-card" style="justify-content:space-between;">
+      <span style="font-size:13px; color:var(--ink-soft);">Toutes les corrections faites sur cette machine, avec ce navigateur.</span>
+      <button class="btn btn-ghost" onclick="clearHistory()">🗑 Vider l'historique</button>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
+  <div class="correction-panel" id="panel">
+    <div class="empty">Entre une fonction et clique sur « Corriger ».</div>
+  </div>
+</div>
+
+<script>
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('themeToggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('iversen-theme', theme);
+}
+function toggleTheme(){
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+  if(typeof refreshPlotTheme === 'function') refreshPlotTheme();
+}
+(function initTheme(){
+  const saved = localStorage.getItem('iversen-theme');
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(saved || (prefersDark ? 'dark' : 'light'));
+})();
+function switchTab(tab){
+  document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.querySelector(`.tab-btn[data-tab="${tab}"]`).classList.add('active');
+}
+</script>
+<script>
+const API = "";  // chemin relatif : le frontend est servi par la même API FastAPI (voir app.py)
+
+async function handlePagePhoto(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const box = document.getElementById('ocrCandidates');
+  const list = document.getElementById('candidatesList');
+  box.style.display = 'flex';
+  list.innerHTML = '<div class="loading">Lecture de la page…</div>';
+
+  const formData = new FormData();
+  formData.append('image', file);
+
+  try{
+    const r = await fetch(API + "/api/ocr-page", { method: "POST", body: formData });
+    const data = await r.json();
+    if(!r.ok || !data.candidates || data.candidates.length === 0){
+      list.innerHTML = `<div class="error">${data.detail || "Aucune ligne détectée sur cette photo."}</div>`;
+      return;
+    }
+    list.innerHTML = "";
+    data.candidates.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'candidate-item';
+      const scoreClass = c.math_likelihood >= 0.5 ? '' : 'low';
+      item.innerHTML = `<span>${c.raw_text}</span><span class="candidate-score ${scoreClass}">${Math.round(c.math_likelihood*100)}%</span>`;
+      item.onclick = () => {
+        box.style.display = 'none';
+        // on repasse par la revue habituelle pour permettre une dernière correction manuelle
+        const review = document.getElementById('ocrReview');
+        const ocrTextInput = document.getElementById('ocrText');
+        const warningBox = document.getElementById('ocrWarning');
+        review.style.display = 'flex';
+        ocrTextInput.value = c.suggested_function_str || c.cleaned_text || c.raw_text;
+        warningBox.textContent = c.parse_error || "Vérifiez toujours ce texte avant de lancer la correction.";
+      };
+      list.appendChild(item);
+    });
+  }catch(e){
+    list.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+  event.target.value = "";
+}
+
+async function handlePhoto(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const review = document.getElementById('ocrReview');
+  const ocrTextInput = document.getElementById('ocrText');
+  const warningBox = document.getElementById('ocrWarning');
+  review.style.display = 'flex';
+  ocrTextInput.value = "Lecture de la photo…";
+  warningBox.textContent = "";
+
+  const formData = new FormData();
+  formData.append('image', file);
+
+  try{
+    const r = await fetch(API + "/api/ocr", { method: "POST", body: formData });
+    const data = await r.json();
+    if(!r.ok){
+      ocrTextInput.value = "";
+      warningBox.textContent = data.detail || "Impossible de lire cette image.";
+      return;
+    }
+    // on propose le texte nettoyé (le plus lisible), l'utilisateur peut tout corriger
+    ocrTextInput.value = data.suggested_function_str || data.cleaned_text || data.raw_text;
+    warningBox.textContent = data.parse_error
+      ? data.parse_error
+      : data.note; // toujours afficher l'avertissement OCR, même en cas de succès apparent
+  }catch(e){
+    ocrTextInput.value = "";
+    warningBox.textContent = "Impossible de joindre le backend pour l'OCR.";
+  }
+  // on efface l'input file pour permettre de reprendre la même photo si besoin
+  event.target.value = "";
+}
+
+function submitOcrText(){
+  const text = document.getElementById('ocrText').value.trim();
+  if(!text) return;
+  document.getElementById('fn').value = text;
+  document.getElementById('ocrReview').style.display = 'none';
+  switchTab('function');
+  runCorrection();
+}
+
+async function checkHealth(){
+  const el = document.getElementById('status');
+  try{
+    const r = await fetch(API + "/api/health");
+    const d = await r.json();
+    el.textContent = "Moteur SymPy actif · aucun LLM";
+    el.classList.remove('off');
+  }catch(e){
+    el.textContent = "Backend indisponible — lance `uvicorn app:app --reload`";
+    el.classList.add('off');
+  }
+}
+
+async function loadExamples(){
+  try{
+    const r = await fetch(API + "/api/examples");
+    const list = await r.json();
+    const box = document.getElementById('examples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => { document.getElementById('fn').value = ex.function_str; runCorrection(); };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré, on ignore silencieusement */ }
+}
+
+function renderMath(latex){
+  try{
+    return katex.renderToString(latex, { throwOnError:false, displayMode:false });
+  }catch(e){ return latex; }
+}
+
+async function runCorrection(){
+  const panel = document.getElementById('panel');
+  const fn = document.getElementById('fn').value.trim();
+  if(!fn) return;
+  panel.innerHTML = '<div class="loading">Correction en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/correct", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ function_str: fn, exercise_title: "Étude de f(x) = " + fn })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de correction"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    window.__lastFunctionStr = fn;
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend. Lance-t-il bien sur le port 8000 ?</div>';
+  }
+}
+
+function currentTabInfo(){
+  const btn = document.querySelector('.tab-btn.active');
+  if(!btn) return { type: 'inconnu', label: 'Exercice' };
+  return { type: btn.dataset.tab, label: btn.textContent.trim().replace(/^[^\wÀ-ÿ]+/, '').trim() };
+}
+
+function isGuidedMode(){
+  return localStorage.getItem('iversen-guided') === '1';
+}
+function toggleGuidedMode(){
+  const next = !isGuidedMode();
+  localStorage.setItem('iversen-guided', next ? '1' : '0');
+  if(window.__lastCorrection){
+    window.__revealedSteps = new Set();
+    renderCorrection(window.__lastCorrection, { isNew: false });
+  }
+}
+
+function renderCorrection(data, opts){
+  opts = opts || {};
+  const isNew = opts.isNew !== false;
+  const panel = document.getElementById('panel');
+  window.__lastCorrection = data; // conservé pour l'export PDF
+  const guided = isGuidedMode();
+  if(isNew) window.__revealedSteps = new Set();
+  window.__stepsData = data.steps;
+
+  let html = `
+    <div class="correction-head">
+      <div>
+        <h2>${data.exercise_title}</h2>
+        <p>Rédigée par le moteur symbolique — ${data.subject_line || ("f(x) = " + data.function_str)}</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        <label class="guided-toggle" title="Révéler les étapes une par une, pour réfléchir avant de voir la suite">
+          <input type="checkbox" ${guided ? "checked" : ""} onchange="toggleGuidedMode()"> Mode guidé
+        </label>
+        <div class="score-badge">
+          <div class="num">${data.score}/${data.score_max}</div>
+          <div class="label">Note</div>
+        </div>
+      </div>
+    </div>
+    <div class="steps" id="stepsContainer">`;
+  data.steps.forEach((s, i) => {
+    const revealed = !guided || i === 0 || window.__revealedSteps.has(i);
+    html += renderStepHtml(s, i, revealed);
+  });
+  html += `</div>`;
+  if(guided && data.steps.some((_, i) => !(i === 0 || window.__revealedSteps.has(i)))){
+    html += `<div style="padding:0 24px 16px;"><button class="btn btn-ghost" onclick="revealAllSteps()">👁 Tout révéler</button></div>`;
+  }
+  html += `
+    <div id="plotArea" style="display:none; padding:0 24px 20px;"></div>
+    <div style="padding:16px 24px; border-top:1px solid var(--line); display:flex; justify-content:flex-end; gap:8px;">
+      ${window.__lastFunctionStr ? `<button class="btn btn-ghost" id="plotBtn" onclick="showPlot()">📈 Voir la courbe</button>` : ""}
+      <button class="btn btn-ghost" id="exportDocxBtn" onclick="exportCurrentDocx()">⬇ Exporter en Word</button>
+      <button class="btn btn-ghost" id="exportPdfBtn" onclick="exportCurrentPdf()">⬇ Exporter en PDF</button>
+    </div>`;
+  panel.innerHTML = html;
+  if(isNew) saveToHistory(data);
+}
+
+function renderStepHtml(s, i, revealed){
+  if(!revealed){
+    return `
+      <div class="step step-locked" id="step-${i}">
+        <div class="step-num">${i+1}</div>
+        <div>
+          <div class="step-title">${s.title}</div>
+          <button class="btn btn-ghost step-reveal-btn" onclick="revealStep(${i})">🔒 Révéler cette étape</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="step" id="step-${i}">
+      <div class="step-num">${i+1}</div>
+      <div>
+        <div class="step-title">${s.title}</div>
+        <div class="step-body">
+          <div class="math">${renderMath(s.result_latex)}</div>
+          ${s.explanation}
+          ${s.rule_recalled ? `<div class="rule-recall">Règle rappelée : ${renderMath(s.rule_recalled)}</div>` : ""}
+          ${s.warning ? `<div class="warning">⚠ ${s.warning}</div>` : ""}
+        </div>
+      </div>
+    </div>`;
+}
+
+function revealStep(i){
+  window.__revealedSteps.add(i);
+  const el = document.getElementById('step-' + i);
+  if(el) el.outerHTML = renderStepHtml(window.__stepsData[i], i, true);
+  // masque le bouton "Tout révéler" si tout est désormais visible
+  if(window.__stepsData.every((_, idx) => idx === 0 || window.__revealedSteps.has(idx))){
+    const btn = document.querySelector('#panel button[onclick="revealAllSteps()"]');
+    if(btn && btn.parentElement) btn.parentElement.style.display = 'none';
+  }
+}
+
+function revealAllSteps(){
+  window.__stepsData.forEach((_, i) => { if(!window.__revealedSteps.has(i)) revealStep(i); });
+}
+
+async function saveToHistory(data){
+  try{
+    const info = currentTabInfo();
+    await fetch(API + "/api/history", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        exercise_type: info.type,
+        exercise_type_label: info.label,
+        title: data.exercise_title || info.label,
+        summary: data.subject_line || data.function_str || data.equation_str || "",
+        payload: data,
+        score: data.score, score_max: data.score_max,
+      })
+    });
+  }catch(e){ /* l'historique est un confort, pas un pré-requis : on n'interrompt jamais une correction pour ça */ }
+}
+
+async function loadHistory(){
+  const list = document.getElementById('historyList');
+  list.innerHTML = '<div class="loading">Chargement de l\'historique…</div>';
+  try{
+    const r = await fetch(API + "/api/history");
+    const data = await r.json();
+    if(!data.entries || data.entries.length === 0){
+      list.innerHTML = '<div class="empty">Aucune correction enregistrée pour l\'instant.</div>';
+      return;
+    }
+    list.innerHTML = data.entries.map(e => `
+      <div class="history-card" onclick="openHistoryEntry(${e.id})">
+        <div>
+          <div class="history-card-title">${e.title}</div>
+          <div class="history-card-meta">${e.exercise_type_label} · ${new Date(e.created_at).toLocaleString('fr-FR')}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          ${e.score !== null && e.score !== undefined ? `<div class="score-badge" style="padding:6px 12px;"><div class="num" style="font-size:16px;">${e.score}/${e.score_max}</div></div>` : ""}
+          <button class="btn btn-ghost" onclick="event.stopPropagation(); deleteHistoryEntry(${e.id})" title="Supprimer">🗑</button>
+        </div>
+      </div>`).join('');
+  }catch(e){
+    list.innerHTML = '<div class="error">Impossible de charger l\'historique.</div>';
+  }
+}
+
+async function openHistoryEntry(id){
+  try{
+    const r = await fetch(API + "/api/history/" + id);
+    if(!r.ok) return;
+    const entry = await r.json();
+    window.__lastFunctionStr = entry.payload.function_str || null;
+    renderCorrection(entry.payload, { isNew: false });
+    document.getElementById('panel').scrollIntoView({ behavior:'smooth', block:'start' });
+  }catch(e){ /* silencieux : l'historique reste secondaire */ }
+}
+
+async function deleteHistoryEntry(id){
+  try{
+    await fetch(API + "/api/history/" + id, { method: "DELETE" });
+    loadHistory();
+  }catch(e){}
+}
+
+async function clearHistory(){
+  if(!confirm("Supprimer tout l'historique ? Cette action est irréversible.")) return;
+  try{
+    await fetch(API + "/api/history", { method: "DELETE" });
+    loadHistory();
+  }catch(e){}
+}
+
+function getThemeColors(){
+  const cs = getComputedStyle(document.documentElement);
+  const v = name => cs.getPropertyValue(name).trim();
+  return {
+    ink: v('--ink'), inkSoft: v('--ink-soft'), card: v('--card'),
+    grid: v('--paper-grid'), red: v('--red'), green: v('--green'), gold: v('--gold'),
+  };
+}
+
+function buildPlotFigure(data){
+  const c = getThemeColors();
+  const traces = [{
+    x: data.x, y: data.y, mode: 'lines', type: 'scatter',
+    line: { color: c.ink, width: 2.4, shape: 'linear' },
+    connectgaps: false, hoverinfo: 'x+y', name: 'f(x)',
+  }];
+
+  if(data.critical_points && data.critical_points.length){
+    const maxima = data.critical_points.filter(p => (p.kind||'').includes('maximum'));
+    const minima = data.critical_points.filter(p => (p.kind||'').includes('minimum'));
+    const others = data.critical_points.filter(p => !(p.kind||'').includes('maximum') && !(p.kind||'').includes('minimum'));
+    if(maxima.length) traces.push({
+      x: maxima.map(p=>p.x), y: maxima.map(p=>p.y), mode:'markers', type:'scatter',
+      marker:{ color: c.green, size: 9, line:{color:c.card, width:1.5} },
+      name:'Maximum', hovertemplate:'Maximum : (%{x}; %{y})<extra></extra>',
+    });
+    if(minima.length) traces.push({
+      x: minima.map(p=>p.x), y: minima.map(p=>p.y), mode:'markers', type:'scatter',
+      marker:{ color: c.red, size: 9, line:{color:c.card, width:1.5} },
+      name:'Minimum', hovertemplate:'Minimum : (%{x}; %{y})<extra></extra>',
+    });
+    if(others.length) traces.push({
+      x: others.map(p=>p.x), y: others.map(p=>p.y), mode:'markers', type:'scatter',
+      marker:{ color: c.ink, size: 8, line:{color:c.card, width:1.5} },
+      name:'Point remarquable', hovertemplate:'(%{x}; %{y})<extra></extra>',
+    });
+  }
+  if(data.inflection_points && data.inflection_points.length){
+    traces.push({
+      x: data.inflection_points.map(p=>p.x), y: data.inflection_points.map(p=>p.y),
+      mode:'markers', type:'scatter',
+      marker:{ color: c.card, size: 9, symbol:'diamond', line:{color:c.ink, width:1.8} },
+      name:'Inflexion', hovertemplate:'Inflexion : (%{x}; %{y})<extra></extra>',
+    });
+  }
+
+  const shapes = [];
+  (data.vertical_asymptotes||[]).forEach(x0 => {
+    shapes.push({ type:'line', x0, x1:x0, y0:data.y_range[0], y1:data.y_range[1],
+      line:{ color:c.red, width:1.4, dash:'dash' } });
+  });
+  (data.horizontal_asymptotes||[]).forEach(y0 => {
+    shapes.push({ type:'line', x0:data.x_range[0], x1:data.x_range[1], y0, y1:y0,
+      line:{ color:c.red, width:1.4, dash:'dash' } });
+  });
+  // axes x=0 et y=0, toujours visibles, plus discrets que les asymptotes
+  shapes.push({ type:'line', x0:data.x_range[0], x1:data.x_range[1], y0:0, y1:0, line:{color:c.inkSoft, width:1} });
+  shapes.push({ type:'line', x0:0, x1:0, y0:data.y_range[0], y1:data.y_range[1], line:{color:c.inkSoft, width:1} });
+
+  const layout = {
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    margin: { l: 44, r: 20, t: 16, b: 36 },
+    xaxis: { range: data.x_range, gridcolor: c.grid, zeroline:false, color: c.inkSoft, tickfont:{size:11} },
+    yaxis: { range: data.y_range, gridcolor: c.grid, zeroline:false, color: c.inkSoft, tickfont:{size:11} },
+    shapes, showlegend:false, hovermode:'closest',
+    font: { family: 'Inter, sans-serif', color: c.ink },
+    height: 420,
+  };
+  const config = { displaylogo:false, responsive:true,
+    modeBarButtonsToRemove:['lasso2d','select2d','autoScale2d'],
+    toImageButtonOptions:{ format:'png', filename: 'courbe' } };
+  return { traces, layout, config };
+}
+
+async function showPlot(){
+  const fn = window.__lastFunctionStr;
+  if(!fn) return;
+  const area = document.getElementById('plotArea');
+  const btn = document.getElementById('plotBtn');
+  area.style.display = 'block';
+  area.innerHTML = '<div class="loading">Tracé du graphique…</div>';
+  btn.disabled = true;
+  try{
+    const r = await fetch(API + "/api/plot-data", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ function_str: fn })
+    });
+    if(!r.ok){
+      area.innerHTML = '<div class="error">Impossible de générer le graphique.</div>';
+      return;
+    }
+    const data = await r.json();
+    window.__lastPlotData = data;
+    area.innerHTML = `
+      <div class="plot-wrap">
+        <div id="plotlyChart"></div>
+        <div class="plot-legend">
+          <span><i style="background:var(--green)"></i> Maximum</span>
+          <span><i style="background:var(--red)"></i> Minimum</span>
+          <span><i style="background:var(--card); border:1.8px solid var(--ink); box-sizing:border-box;"></i> Inflexion</span>
+          <span><i style="background:transparent; border-bottom:2px dashed var(--red); border-radius:0; width:14px; height:0;"></i> Asymptote</span>
+        </div>
+      </div>`;
+    const fig = buildPlotFigure(data);
+    Plotly.newPlot('plotlyChart', fig.traces, fig.layout, fig.config);
+  }catch(e){
+    area.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+function refreshPlotTheme(){
+  const chartEl = document.getElementById('plotlyChart');
+  if(!chartEl || !window.__lastPlotData || !window.Plotly) return;
+  const fig = buildPlotFigure(window.__lastPlotData);
+  Plotly.react('plotlyChart', fig.traces, fig.layout, fig.config);
+}
+
+async function _exportCurrent(endpoint, extension, btnId){
+  const data = window.__lastCorrection;
+  if(!data) return;
+  const btn = document.getElementById(btnId);
+  const originalLabel = btn.textContent;
+  btn.textContent = "Génération…";
+  btn.disabled = true;
+  try{
+    const r = await fetch(API + endpoint, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(data)
+    });
+    if(!r.ok){
+      alert("Échec de l'export.");
+      return;
+    }
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (data.exercise_title || "correction").replace(/\s+/g, "_") + extension;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }catch(e){
+    alert("Impossible de joindre le backend pour l'export.");
+  }finally{
+    btn.textContent = originalLabel;
+    btn.disabled = false;
+  }
+}
+
+async function exportCurrentPdf(){
+  await _exportCurrent("/api/export-pdf", ".pdf", "exportPdfBtn");
+}
+
+async function exportCurrentDocx(){
+  await _exportCurrent("/api/export-docx", ".docx", "exportDocxBtn");
+}
+
+async function loadEquationExamples(){
+  try{
+    const r = await fetch(API + "/api/equation-examples");
+    const list = await r.json();
+    const box = document.getElementById('equationExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => { document.getElementById('eq').value = ex.equation_str; runEquation(); };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runEquation(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const eq = document.getElementById('eq').value.trim();
+  if(!eq) return;
+  panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/solve-equation", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ equation_str: eq, exercise_title: "Résolution : " + eq })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de résolution"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadInequalityExamples(){
+  try{
+    const r = await fetch(API + "/api/inequality-examples");
+    const list = await r.json();
+    const box = document.getElementById('inequalityExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => { document.getElementById('ineq').value = ex.inequality_str; runInequality(); };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runInequality(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const ineq = document.getElementById('ineq').value.trim();
+  if(!ineq) return;
+  panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/solve-inequality", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ inequality_str: ineq, exercise_title: "Résolution : " + ineq })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de résolution"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadSystemExamples(){
+  try{
+    const r = await fetch(API + "/api/system-examples");
+    const list = await r.json();
+    const box = document.getElementById('systemExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('sys1').value = ex.equation1_str;
+        document.getElementById('sys2').value = ex.equation2_str;
+        runSystem();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runSystem(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const eq1 = document.getElementById('sys1').value.trim();
+  const eq2 = document.getElementById('sys2').value.trim();
+  if(!eq1 || !eq2) return;
+  panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/solve-system", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ equation1_str: eq1, equation2_str: eq2, exercise_title: "Résolution du système" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de résolution"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadSequenceExamples(){
+  try{
+    const r = await fetch(API + "/api/sequence-examples");
+    const list = await r.json();
+    const box = document.getElementById('sequenceExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('seqU0').value = ex.first_term_str;
+        document.getElementById('seqRec').value = ex.recurrence_str;
+        runSequence();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runSequence(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const u0 = document.getElementById('seqU0').value.trim();
+  const rec = document.getElementById('seqRec').value.trim();
+  if(!u0 || !rec) return;
+  panel.innerHTML = '<div class="loading">Étude en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-sequence", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ first_term_str: u0, recurrence_str: rec, exercise_title: "Étude de la suite" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur d'analyse"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadBinomialExamples(){
+  try{
+    const r = await fetch(API + "/api/binomial-examples");
+    const list = await r.json();
+    const box = document.getElementById('binomialExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('binN').value = ex.n;
+        document.getElementById('binP').value = ex.p_str;
+        document.getElementById('binK').value = ex.k;
+        runBinomial();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runBinomial(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const n = parseInt(document.getElementById('binN').value.trim(), 10);
+  const p = document.getElementById('binP').value.trim();
+  const kRaw = document.getElementById('binK').value.trim();
+  const k = kRaw === "" ? null : parseInt(kRaw, 10);
+  if(!n || !p) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-binomial", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ n: n, p_str: p, k: k, exercise_title: "Loi binomiale" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadComplexExamples(){
+  try{
+    const r = await fetch(API + "/api/complex-examples");
+    const list = await r.json();
+    const box = document.getElementById('complexExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => { document.getElementById('cplxZ').value = ex.z_str; runComplex(); };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runComplex(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const z = document.getElementById('cplxZ').value.trim();
+  if(!z) return;
+  panel.innerHTML = '<div class="loading">Étude en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-complex", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ z_str: z, exercise_title: "Étude du nombre complexe z" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur d'analyse"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+function _parseMatrixInput(text){
+  return text.trim().split(";").map(row => row.trim().split(",").map(c => c.trim()));
+}
+
+async function loadMatrixExamples(){
+  try{
+    const r = await fetch(API + "/api/matrix-examples");
+    const list = await r.json();
+    const box = document.getElementById('matrixExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('matA').value = ex.rows.map(r => r.join(",")).join(";");
+        document.getElementById('matOp').value = "analyze";
+        runMatrix();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runMatrix(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const op = document.getElementById('matOp').value;
+  const rowsA = _parseMatrixInput(document.getElementById('matA').value);
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    let r;
+    if(op === "analyze"){
+      r = await fetch(API + "/api/analyze-matrix", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ rows: rowsA, exercise_title: "Étude d'une matrice" })
+      });
+    }else{
+      const rowsB = _parseMatrixInput(document.getElementById('matB').value);
+      r = await fetch(API + "/api/matrix-operation", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ rows_a: rowsA, rows_b: rowsB, operation: op, exercise_title: "Opération matricielle" })
+      });
+    }
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+function _parsePointInput(text){
+  return text.trim().split(",").map(c => Number(c.trim()));
+}
+
+async function loadGeometryExamples(){
+  try{
+    const r = await fetch(API + "/api/geometry-examples");
+    const list = await r.json();
+    const box = document.getElementById('geometryExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('geoA').value = ex.A.join(",");
+        document.getElementById('geoB').value = ex.B.join(",");
+        document.getElementById('geoC').value = ex.C ? ex.C.join(",") : "";
+        runGeometry();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runGeometry(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const A = _parsePointInput(document.getElementById('geoA').value);
+  const B = _parsePointInput(document.getElementById('geoB').value);
+  const cRaw = document.getElementById('geoC').value.trim();
+  const C = cRaw ? _parsePointInput(cRaw) : null;
+  panel.innerHTML = '<div class="loading">Étude en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-geometry", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ A: A, B: B, C: C, exercise_title: "Géométrie analytique" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur d'analyse"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadChemistryExamples(){
+  try{
+    const r = await fetch(API + "/api/chemistry-examples");
+    const list = await r.json();
+    const box = document.getElementById('chemistryExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => { document.getElementById('chemEq').value = ex.equation_str; runChemistry(); };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runChemistry(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const eq = document.getElementById('chemEq').value.trim();
+  if(!eq) return;
+  panel.innerHTML = '<div class="loading">Équilibrage en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/balance-equation", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ equation_str: eq, exercise_title: "Équilibrage d'équation chimique" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur d'équilibrage"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadCircuitExamples(){
+  try{
+    const r = await fetch(API + "/api/circuit-examples");
+    const list = await r.json();
+    const box = document.getElementById('circuitExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('circR').value = ex.resistances.join(",");
+        document.getElementById('circTopo').value = ex.topology;
+        document.getElementById('circU').value = ex.voltage;
+        runCircuit();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runCircuit(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const resistances = document.getElementById('circR').value.trim().split(",").map(r => r.trim()).filter(Boolean);
+  const topology = document.getElementById('circTopo').value;
+  const voltage = document.getElementById('circU').value.trim();
+  if(!resistances.length || !voltage) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-circuit", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ resistances: resistances, topology: topology, voltage: voltage, exercise_title: "Circuit électrique" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadKinematicsExamples(){
+  try{
+    const r = await fetch(API + "/api/kinematics-examples");
+    const list = await r.json();
+    const box = document.getElementById('kinematicsExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('kinX0').value = ex.x0;
+        document.getElementById('kinV0').value = ex.v0;
+        document.getElementById('kinA').value = ex.a;
+        document.getElementById('kinT').value = ex.t;
+        runKinematics();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runKinematics(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const x0 = document.getElementById('kinX0').value.trim();
+  const v0 = document.getElementById('kinV0').value.trim();
+  const a = document.getElementById('kinA').value.trim();
+  const t = document.getElementById('kinT').value.trim();
+  if(!x0 || !v0 || !a || !t) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-kinematics", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ x0: x0, v0: v0, a: a, t: t, exercise_title: "Cinématique (MRUV)" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadOpticsExamples(){
+  try{
+    const r = await fetch(API + "/api/optics-examples");
+    const list = await r.json();
+    const box = document.getElementById('opticsExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('optF').value = ex.f;
+        document.getElementById('optOA').value = ex.OA;
+        runOptics();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runOptics(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const f = document.getElementById('optF').value.trim();
+  const OA = document.getElementById('optOA').value.trim();
+  if(!f || !OA) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-optics", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ f: f, OA: OA, exercise_title: "Optique — lentille convergente" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+async function loadStoichiometryExamples(){
+  try{
+    const r = await fetch(API + "/api/stoichiometry-examples");
+    const list = await r.json();
+    const box = document.getElementById('stoichiometryExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('stoEq').value = ex.equation_str;
+        document.getElementById('stoCompound').value = ex.known_compound;
+        document.getElementById('stoAmount').value = ex.amount;
+        document.getElementById('stoType').value = ex.amount_type;
+        runStoichiometry();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runStoichiometry(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const eq = document.getElementById('stoEq').value.trim();
+  const compound = document.getElementById('stoCompound').value.trim();
+  const amount = document.getElementById('stoAmount').value.trim();
+  const amountType = document.getElementById('stoType').value;
+  if(!eq || !compound || !amount) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-stoichiometry", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ equation_str: eq, known_compound: compound, amount: amount, amount_type: amountType, exercise_title: "Stœchiométrie" })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+function updateThermoFields(){
+  const mode = document.getElementById('thermoMode').value;
+  document.getElementById('thermoSensibleFields').style.display = mode === 'sensible' ? 'inline' : 'none';
+  document.getElementById('thermoLatentFields').style.display = mode === 'latente' ? 'inline' : 'none';
+}
+
+async function loadThermoExamples(){
+  try{
+    const r = await fetch(API + "/api/thermodynamics-examples");
+    const list = await r.json();
+    const box = document.getElementById('thermoExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('thermoMode').value = ex.mode;
+        document.getElementById('thermoMass').value = ex.mass;
+        if(ex.mode === 'sensible'){
+          document.getElementById('thermoC').value = ex.specific_heat;
+          document.getElementById('thermoTi').value = ex.t_initial;
+          document.getElementById('thermoTf').value = ex.t_final;
+        }else{
+          document.getElementById('thermoL').value = ex.latent_heat;
+        }
+        updateThermoFields();
+        runThermo();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runThermo(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const mode = document.getElementById('thermoMode').value;
+  const mass = document.getElementById('thermoMass').value.trim();
+  if(!mass) return;
+  const body = { mode: mode, mass: mass, exercise_title: "Calorimétrie" };
+  if(mode === 'sensible'){
+    body.specific_heat = document.getElementById('thermoC').value.trim();
+    body.t_initial = document.getElementById('thermoTi').value.trim();
+    body.t_final = document.getElementById('thermoTf').value.trim();
+  }else{
+    body.latent_heat = document.getElementById('thermoL').value.trim();
+  }
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-thermodynamics", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+checkHealth();
+loadExamples();
+loadEquationExamples();
+loadInequalityExamples();
+loadSystemExamples();
+loadSequenceExamples();
+loadBinomialExamples();
+loadComplexExamples();
+loadMatrixExamples();
+loadGeometryExamples();
+loadChemistryExamples();
+loadCircuitExamples();
+loadKinematicsExamples();
+loadOpticsExamples();
+loadStoichiometryExamples();
+loadThermoExamples();
+</script>
+</body>
+</html>
