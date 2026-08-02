@@ -489,6 +489,47 @@ function toComputable(s){
   return s;
 }
 
+// Formatage EN DIRECT pendant la frappe : des qu'on tape un caractere apres
+// un exposant ("^3" ou "**3"), il se transforme immediatement en "³".
+// On attend que l'exposant soit "ferme" par un autre caractere (espace,
+// operateur...) avant de le convertir, pour pouvoir taper "^12" (plusieurs
+// chiffres) sans que "1" se convertisse tout seul avant le "2".
+function liveFormatExponents(inputEl){
+  const value = inputEl.value;
+  const pos = inputEl.selectionStart;
+  if(pos === null || pos !== inputEl.selectionEnd) return; // pas de formatage si du texte est selectionne
+  const justTyped = value[pos-1];
+  if(justTyped === undefined || /[0-9]/.test(justTyped)) return;
+  const before = value.slice(0, pos-1);
+  const m = before.match(/(\*\*|\^)(\d+)$/);
+  if(!m) return;
+  const supered = m[2].split('').map(c => _SUPER_MAP[c]).join('');
+  const start = pos - 1 - m[0].length;
+  inputEl.value = value.slice(0, start) + supered + value.slice(pos-1);
+  const newPos = start + supered.length + 1;
+  inputEl.setSelectionRange(newPos, newPos);
+}
+
+// Cas d'un exposant tape en tout dernier (rien tape apres) : on le convertit
+// quand le champ perd le focus (ex: on clique sur "Corriger").
+function liveFormatExponentsOnBlur(inputEl){
+  const value = inputEl.value;
+  const m = value.match(/(\*\*|\^)(\d+)$/);
+  if(!m) return;
+  const supered = m[2].split('').map(c => _SUPER_MAP[c]).join('');
+  const start = value.length - m[0].length;
+  inputEl.value = value.slice(0, start) + supered;
+}
+
+function attachLiveExponentFormatting(ids){
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener('input', () => liveFormatExponents(el));
+    el.addEventListener('blur', () => liveFormatExponentsOnBlur(el));
+  });
+}
+
 async function handlePagePhoto(event){
   const file = event.target.files[0];
   if(!file) return;
@@ -1649,6 +1690,7 @@ loadKinematicsExamples();
 loadOpticsExamples();
 loadStoichiometryExamples();
 loadThermoExamples();
+attachLiveExponentFormatting(['fn', 'eq', 'ineq', 'sys1', 'sys2']);
 </script>
 </body>
 </html>
