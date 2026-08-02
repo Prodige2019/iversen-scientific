@@ -15,17 +15,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Compiler l'EXE
+      - name: Compiler l'application (PyInstaller)
         working-directory: iversen_engine
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
           pyinstaller --onedir --windowed --name IversenScientific --icon icon.ico --add-data "frontend;frontend" run_desktop.py
 
+      - name: Installer Inno Setup
+        run: choco install innosetup -y
+
+      - name: Construire l'installateur
+        working-directory: iversen_engine
+        run: |
+          mkdir installer_output
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
       - uses: actions/upload-artifact@v4
         with:
-          name: IversenScientific-windows-exe
-          path: iversen_engine/dist/IversenScientific
+          name: IversenScientific-windows-installer
+          path: iversen_engine/installer_output/IversenScientific-Setup.exe
 
   macos-dmg:
     runs-on: macos-latest
