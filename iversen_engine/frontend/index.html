@@ -11,8 +11,8 @@
 
   :root{
     --paper: #FAF6EE; --paper-grid:#C9D9E8; --ink:#1B2A45; --ink-soft:#4B5A73;
-    --red:#B23A2F; --gold:#B8912B; --gold-soft:#F1E6C4; --green:#3E7A52;
-    --card:#FFFFFF; --line:#E4DCC9;
+    --red: #B23A2F; --gold:#B8912B; --gold-soft:#F1E6C4; --green:#3E7A52;
+    --card: #FFFFFF; --line:#E4DCC9;
     --shadow: 0 1px 2px rgba(27,42,69,.04);
     --surface-soft:#FDFCF8; --surface-muted:#F3EFE4; --surface-hover:#FCF6E3;
     --success-bg:#EEF3F0; --error-bg:#F7E9E7; --warning-text:#8A3B2F;
@@ -200,7 +200,7 @@
   <div class="tab-panel active" id="tab-function">
     <div class="input-card">
       <label for="fn">f(x) =</label>
-      <input type="text" id="fn" value="x**3 - 3*x + 2" spellcheck="false">
+      <input type="text" id="fn" value="x³ - 3x + 2" spellcheck="false">
       <button class="btn btn-primary" onclick="runCorrection()">Corriger</button>
       <div class="examples" id="examples"></div>
     </div>
@@ -209,7 +209,7 @@
   <div class="tab-panel" id="tab-equation">
     <div class="input-card">
       <label for="eq">Équation :</label>
-      <input type="text" id="eq" value="x**2 - 5*x + 6 = 0" spellcheck="false">
+      <input type="text" id="eq" value="x² - 5x + 6 = 0" spellcheck="false">
       <button class="btn btn-primary" onclick="runEquation()">Résoudre</button>
       <div class="examples" id="equationExamples"></div>
     </div>
@@ -218,7 +218,7 @@
   <div class="tab-panel" id="tab-inequality">
     <div class="input-card">
       <label for="ineq">Inéquation :</label>
-      <input type="text" id="ineq" value="x**2 - 5*x + 6 > 0" spellcheck="false">
+      <input type="text" id="ineq" value="x² - 5x + 6 > 0" spellcheck="false">
       <button class="btn btn-primary" onclick="runInequality()">Résoudre</button>
       <div class="examples" id="inequalityExamples"></div>
     </div>
@@ -227,7 +227,7 @@
   <div class="tab-panel" id="tab-system">
     <div class="input-card">
       <label for="sys1">Système :</label>
-      <input type="text" id="sys1" value="2*x + y = 5" spellcheck="false" style="max-width:220px;">
+      <input type="text" id="sys1" value="2x + y = 5" spellcheck="false" style="max-width:220px;">
       <input type="text" id="sys2" value="x - y = 1" spellcheck="false" style="max-width:220px;">
       <button class="btn btn-primary" onclick="runSystem()">Résoudre</button>
       <div class="examples" id="systemExamples"></div>
@@ -468,6 +468,27 @@ function switchTab(tab){
 <script>
 const API = "";  // chemin relatif : le frontend est servi par la même API FastAPI (voir app.py)
 
+// --- Notation lisible (x^3 -> x³) <-> notation calculable (x³ -> x^3) ---
+// Utilisées pour que les champs de saisie affichent une notation naturelle,
+// tout en envoyant toujours au moteur une notation qu'il sait analyser.
+const _SUPER_MAP = {'0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹'};
+const _SUPER_MAP_INV = {'⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9'};
+
+function toDisplayJS(s){
+  if(!s) return s;
+  s = s.replace(/([A-Za-z0-9\)])\*\*(\d+)/g, (m, a, b) => a + b.split('').map(c => _SUPER_MAP[c]).join(''));
+  s = s.replace(/(\d)\*([A-Za-z\(])/g, '$1$2');
+  s = s.replace(/\*/g, '×');
+  return s;
+}
+
+function toComputable(s){
+  if(!s) return s;
+  s = s.replace(/([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/g, (m) => '^' + m.split('').map(c => _SUPER_MAP_INV[c]).join(''));
+  s = s.replace(/×/g, '*');
+  return s;
+}
+
 async function handlePagePhoto(event){
   const file = event.target.files[0];
   if(!file) return;
@@ -576,7 +597,7 @@ async function loadExamples(){
       const chip = document.createElement('span');
       chip.className = 'example-chip';
       chip.textContent = ex.title;
-      chip.onclick = () => { document.getElementById('fn').value = ex.function_str; runCorrection(); };
+      chip.onclick = () => { document.getElementById('fn').value = ex.display || ex.function_str; runCorrection(); };
       box.appendChild(chip);
     });
   }catch(e){ /* backend pas encore démarré, on ignore silencieusement */ }
@@ -590,7 +611,7 @@ function renderMath(latex){
 
 async function runCorrection(){
   const panel = document.getElementById('panel');
-  const fn = document.getElementById('fn').value.trim();
+  const fn = toComputable(document.getElementById('fn').value.trim());
   if(!fn) return;
   panel.innerHTML = '<div class="loading">Correction en cours…</div>';
   try{
@@ -643,7 +664,7 @@ function renderCorrection(data, opts){
     <div class="correction-head">
       <div>
         <h2>${data.exercise_title}</h2>
-        <p>Rédigée par le moteur symbolique — ${data.subject_line || ("f(x) = " + data.function_str)}</p>
+        <p>Rédigée par le moteur symbolique — ${toDisplayJS(data.subject_line || ("f(x) = " + data.function_str))}</p>
       </div>
       <div style="display:flex; align-items:center; gap:14px;">
         <label class="guided-toggle" title="Révéler les étapes une par une, pour réfléchir avant de voir la suite">
@@ -958,7 +979,7 @@ async function loadEquationExamples(){
       const chip = document.createElement('span');
       chip.className = 'example-chip';
       chip.textContent = ex.title;
-      chip.onclick = () => { document.getElementById('eq').value = ex.equation_str; runEquation(); };
+      chip.onclick = () => { document.getElementById('eq').value = ex.display || ex.equation_str; runEquation(); };
       box.appendChild(chip);
     });
   }catch(e){ /* backend pas encore démarré */ }
@@ -967,7 +988,7 @@ async function loadEquationExamples(){
 async function runEquation(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const eq = document.getElementById('eq').value.trim();
+  const eq = toComputable(document.getElementById('eq').value.trim());
   if(!eq) return;
   panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
   try{
@@ -998,7 +1019,7 @@ async function loadInequalityExamples(){
       const chip = document.createElement('span');
       chip.className = 'example-chip';
       chip.textContent = ex.title;
-      chip.onclick = () => { document.getElementById('ineq').value = ex.inequality_str; runInequality(); };
+      chip.onclick = () => { document.getElementById('ineq').value = ex.display || ex.inequality_str; runInequality(); };
       box.appendChild(chip);
     });
   }catch(e){ /* backend pas encore démarré */ }
@@ -1007,7 +1028,7 @@ async function loadInequalityExamples(){
 async function runInequality(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const ineq = document.getElementById('ineq').value.trim();
+  const ineq = toComputable(document.getElementById('ineq').value.trim());
   if(!ineq) return;
   panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
   try{
@@ -1039,8 +1060,8 @@ async function loadSystemExamples(){
       chip.className = 'example-chip';
       chip.textContent = ex.title;
       chip.onclick = () => {
-        document.getElementById('sys1').value = ex.equation1_str;
-        document.getElementById('sys2').value = ex.equation2_str;
+        document.getElementById('sys1').value = ex.display1 || ex.equation1_str;
+        document.getElementById('sys2').value = ex.display2 || ex.equation2_str;
         runSystem();
       };
       box.appendChild(chip);
@@ -1051,8 +1072,8 @@ async function loadSystemExamples(){
 async function runSystem(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const eq1 = document.getElementById('sys1').value.trim();
-  const eq2 = document.getElementById('sys2').value.trim();
+  const eq1 = toComputable(document.getElementById('sys1').value.trim());
+  const eq2 = toComputable(document.getElementById('sys2').value.trim());
   if(!eq1 || !eq2) return;
   panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
   try{
