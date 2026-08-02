@@ -43,6 +43,24 @@ from export_engine import export_correction_to_pdf, export_correction_to_docx
 from plot_engine import plot_function_analysis_bytes, plot_function_analysis_data
 import history_store
 
+_SUPERSCRIPTS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def to_display(expr_str: str) -> str:
+    """Convertit une expression en notation Python ('x**3 - 3*x + 2') en une
+    version lisible pour l'affichage seulement ('x³ - 3x + 2') : exposants en
+    caractères Unicode, multiplication implicite. Ne touche jamais au champ
+    original envoyé au moteur (function_str, etc.), qui reste inchangé et
+    reste donc toujours calculable."""
+    import re
+    def _exp_repl(m):
+        return m.group(1) + m.group(2).translate(_SUPERSCRIPTS)
+    s = re.sub(r"([A-Za-z0-9\)])\*\*(\d+)", _exp_repl, expr_str)
+    s = re.sub(r"(\d)\*([A-Za-z\(])", r"\1\2", s)
+    s = s.replace("*", "×")
+    return s
+
+
 app = FastAPI(title="Iversen Scientific — Moteur de correction (Phase 1 + OCR)")
 
 # CORS ouvert : usage local de développement uniquement.
@@ -759,38 +777,48 @@ def sequence_examples():
 
 @app.get("/api/system-examples")
 def system_examples():
-    return [
+    raw = [
         {"title": "Solution unique", "equation1_str": "2*x + y = 5", "equation2_str": "x - y = 1"},
         {"title": "Aucune solution", "equation1_str": "2*x + y = 5", "equation2_str": "2*x + y = 3"},
         {"title": "Infinité de solutions", "equation1_str": "2*x + y = 5", "equation2_str": "4*x + 2*y = 10"},
     ]
+    for e in raw:
+        e["display1"] = to_display(e["equation1_str"])
+        e["display2"] = to_display(e["equation2_str"])
+    return raw
 
 
 @app.get("/api/inequality-examples")
 def inequality_examples():
-    return [
+    raw = [
         {"title": "Linéaire", "inequality_str": "2*x - 4 > 0"},
         {"title": "Quadratique (Δ > 0)", "inequality_str": "x**2 - 5*x + 6 > 0"},
         {"title": "Quadratique (Δ = 0)", "inequality_str": "x**2 - 4*x + 4 <= 0"},
         {"title": "Quadratique (Δ < 0)", "inequality_str": "x**2 + x + 1 > 0"},
     ]
+    for e in raw:
+        e["display"] = to_display(e["inequality_str"])
+    return raw
 
 
 @app.get("/api/equation-examples")
 def equation_examples():
-    return [
+    raw = [
         {"title": "Linéaire", "equation_str": "2*x + 4 = 0"},
         {"title": "Quadratique (Δ > 0)", "equation_str": "x**2 - 5*x + 6 = 0"},
         {"title": "Quadratique (Δ = 0)", "equation_str": "x**2 - 4*x + 4 = 0"},
         {"title": "Quadratique (Δ < 0)", "equation_str": "x**2 + x + 1 = 0"},
         {"title": "Degré 3", "equation_str": "x**3 - 8 = 0"},
     ]
+    for e in raw:
+        e["display"] = to_display(e["equation_str"])
+    return raw
 
 
 @app.get("/api/examples")
 def examples():
     """Quelques fonctions prêtes à l'emploi pour tester rapidement le front."""
-    return [
+    raw = [
         {"title": "Polynôme du 3e degré", "function_str": "x**3 - 3*x + 2"},
         {"title": "Fraction rationnelle", "function_str": "(2*x + 1)/(x - 1)"},
         {"title": "Fonction paire", "function_str": "x**4 - 2*x**2"},
@@ -800,6 +828,9 @@ def examples():
         {"title": "Valeur absolue", "function_str": "Abs(x - 2)"},
         {"title": "Fonction par morceaux", "function_str": "Piecewise((x**2, x < 1), (2*x - 1, True))"},
     ]
+    for e in raw:
+        e["display"] = to_display(e["function_str"])
+    return raw
 
 
 class HistoryEntryRequest(BaseModel):
