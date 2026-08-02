@@ -302,7 +302,7 @@
   <div class="tab-panel" id="tab-chemistry">
     <div class="input-card">
       <label for="chemEq">Équation :</label>
-      <input type="text" id="chemEq" value="CH4 + O2 -> CO2 + H2O" spellcheck="false" style="max-width:260px;">
+      <input type="text" id="chemEq" value="CH₄ + O₂ -> CO₂ + H₂O" spellcheck="false" style="max-width:260px;">
       <button class="btn btn-primary" onclick="runChemistry()">Équilibrer</button>
       <div class="examples" id="chemistryExamples"></div>
     </div>
@@ -352,9 +352,9 @@
   <div class="tab-panel" id="tab-stoichiometry">
     <div class="input-card">
       <label for="stoEq">Équation :</label>
-      <input type="text" id="stoEq" value="CH4 + O2 -> CO2 + H2O" spellcheck="false" style="max-width:220px;">
+      <input type="text" id="stoEq" value="CH₄ + O₂ -> CO₂ + H₂O" spellcheck="false" style="max-width:220px;">
       <label for="stoCompound">Composé connu :</label>
-      <input type="text" id="stoCompound" value="CH4" spellcheck="false" style="max-width:80px;">
+      <input type="text" id="stoCompound" value="CH₄" spellcheck="false" style="max-width:80px;">
       <label for="stoAmount">Quantité :</label>
       <input type="text" id="stoAmount" value="16" spellcheck="false" style="max-width:70px;">
       <select id="stoType" style="padding:8px; border-radius:8px; border:1px solid var(--line);">
@@ -528,6 +528,60 @@ function attachLiveExponentFormatting(ids){
     el.addEventListener('input', () => liveFormatExponents(el));
     el.addEventListener('blur', () => liveFormatExponentsOnBlur(el));
   });
+}
+
+// --- Indices en chimie (H2O -> H₂O), meme principe que les exposants. ---
+// Uniquement pour les champs de formules chimiques : dans ce contexte, un
+// chiffre juste apres une lettre ou une parenthese est toujours un indice
+// (convention chimique), donc pas d'ambiguite possible avec un coefficient.
+const _SUB_MAP = {'0':'₀','1':'₁','2':'₂','3':'₃','4':'₄','5':'₅','6':'₆','7':'₇','8':'₈','9':'₉'};
+const _SUB_MAP_INV = {'₀':'0','₁':'1','₂':'2','₃':'3','₄':'4','₅':'5','₆':'6','₇':'7','₈':'8','₉':'9'};
+
+function liveFormatSubscripts(inputEl){
+  const value = inputEl.value;
+  const pos = inputEl.selectionStart;
+  if(pos === null || pos !== inputEl.selectionEnd) return;
+  const justTyped = value[pos-1];
+  if(justTyped === undefined || /[0-9]/.test(justTyped)) return;
+  const before = value.slice(0, pos-1);
+  const m = before.match(/([A-Za-z\)])(\d+)$/);
+  if(!m) return;
+  const subbed = m[2].split('').map(c => _SUB_MAP[c]).join('');
+  const start = pos - 1 - m[2].length;
+  inputEl.value = value.slice(0, start) + subbed + value.slice(pos-1);
+  const newPos = start + subbed.length + 1;
+  inputEl.setSelectionRange(newPos, newPos);
+}
+
+function liveFormatSubscriptsOnBlur(inputEl){
+  const value = inputEl.value;
+  const m = value.match(/([A-Za-z\)])(\d+)$/);
+  if(!m) return;
+  const subbed = m[2].split('').map(c => _SUB_MAP[c]).join('');
+  inputEl.value = value.slice(0, value.length - m[2].length) + subbed;
+}
+
+function attachLiveSubscriptFormatting(ids){
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.addEventListener('input', () => liveFormatSubscripts(el));
+    el.addEventListener('blur', () => liveFormatSubscriptsOnBlur(el));
+  });
+}
+
+// Conversion inverse avant envoi au moteur (H₂O -> H2O) : le moteur de
+// chimie attend des chiffres normaux, pas des indices Unicode.
+function subscriptsToComputable(s){
+  if(!s) return s;
+  return s.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, c => _SUB_MAP_INV[c]);
+}
+
+// Conversion sens inverse (H2O -> H₂O), pour remplir joliment un champ a
+// partir d'une formule brute (ex: quand on clique un exemple de chimie).
+function chemDisplaySubscript(s){
+  if(!s) return s;
+  return s.replace(/([A-Za-z\)])(\d+)/g, (m, a, digits) => a + digits.split('').map(c => _SUB_MAP[c]).join(''));
 }
 
 async function handlePagePhoto(event){
@@ -1158,8 +1212,8 @@ async function loadSequenceExamples(){
 async function runSequence(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const u0 = document.getElementById('seqU0').value.trim();
-  const rec = document.getElementById('seqRec').value.trim();
+  const u0 = subscriptsToComputable(document.getElementById('seqU0').value.trim());
+  const rec = subscriptsToComputable(document.getElementById('seqRec').value.trim());
   if(!u0 || !rec) return;
   panel.innerHTML = '<div class="loading">Étude en cours…</div>';
   try{
@@ -1387,7 +1441,7 @@ async function loadChemistryExamples(){
       const chip = document.createElement('span');
       chip.className = 'example-chip';
       chip.textContent = ex.title;
-      chip.onclick = () => { document.getElementById('chemEq').value = ex.equation_str; runChemistry(); };
+      chip.onclick = () => { document.getElementById('chemEq').value = chemDisplaySubscript(ex.equation_str); runChemistry(); };
       box.appendChild(chip);
     });
   }catch(e){ /* backend pas encore démarré */ }
@@ -1396,7 +1450,7 @@ async function loadChemistryExamples(){
 async function runChemistry(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const eq = document.getElementById('chemEq').value.trim();
+  const eq = subscriptsToComputable(document.getElementById('chemEq').value.trim());
   if(!eq) return;
   panel.innerHTML = '<div class="loading">Équilibrage en cours…</div>';
   try{
@@ -1569,8 +1623,8 @@ async function loadStoichiometryExamples(){
       chip.className = 'example-chip';
       chip.textContent = ex.title;
       chip.onclick = () => {
-        document.getElementById('stoEq').value = ex.equation_str;
-        document.getElementById('stoCompound').value = ex.known_compound;
+        document.getElementById('stoEq').value = chemDisplaySubscript(ex.equation_str);
+        document.getElementById('stoCompound').value = chemDisplaySubscript(ex.known_compound);
         document.getElementById('stoAmount').value = ex.amount;
         document.getElementById('stoType').value = ex.amount_type;
         runStoichiometry();
@@ -1583,8 +1637,8 @@ async function loadStoichiometryExamples(){
 async function runStoichiometry(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const eq = document.getElementById('stoEq').value.trim();
-  const compound = document.getElementById('stoCompound').value.trim();
+  const eq = subscriptsToComputable(document.getElementById('stoEq').value.trim());
+  const compound = subscriptsToComputable(document.getElementById('stoCompound').value.trim());
   const amount = document.getElementById('stoAmount').value.trim();
   const amountType = document.getElementById('stoType').value;
   if(!eq || !compound || !amount) return;
@@ -1691,6 +1745,7 @@ loadOpticsExamples();
 loadStoichiometryExamples();
 loadThermoExamples();
 attachLiveExponentFormatting(['fn', 'eq', 'ineq', 'sys1', 'sys2']);
+attachLiveSubscriptFormatting(['chemEq', 'stoEq', 'stoCompound', 'seqU0', 'seqRec']);
 </script>
 </body>
 </html>
