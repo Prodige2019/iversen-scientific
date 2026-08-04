@@ -39,11 +39,6 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.11"
-        // En local sur Windows (ce PC) : chemin explicite vers Python 3.11.
-        // Sur GitHub Actions (Linux) : la variable d'environnement
-        // CHAQUOPY_BUILD_PYTHON (définie dans le workflow) pointe vers
-        // "python3.11" installé par le runner — sans quoi ce chemin Windows
-        // ferait échouer la compilation sur GitHub.
         buildPython(System.getenv("CHAQUOPY_BUILD_PYTHON") ?: "C:/Users/brice/AppData/Local/Programs/Python/Python311/python.exe")
         pip {
             install("fastapi")
@@ -65,6 +60,12 @@ kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
     }
+}
+
+dependencies {
+    // Google ML Kit Text Recognition — OCR natif Android, 100% hors ligne,
+    // appelé directement depuis Python via le pont Chaquopy (voir ocr/reader.py).
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
 
 flutter {
