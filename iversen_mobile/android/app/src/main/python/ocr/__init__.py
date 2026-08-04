@@ -1,29 +1,33 @@
 """
-Version mobile de l'OCR : les vraies dependances (cv2, pytesseract) ne
-sont pas installees sur Android (voir GUIDE_HORS_LIGNE_CHAQUOPY.md,
-Phase 2 - remplacement prevu par Google ML Kit). En attendant, ces
-fonctions existent pour que l'import de app.py ne plante pas, mais
-renvoient une erreur claire si on les appelle vraiment.
+Module OCR mobile (Google ML Kit) — voir reader.py pour l'implémentation.
 """
+import re
+
+from .reader import extract_text, extract_line_candidates, OcrParseError
 
 
-class OcrParseError(Exception):
-    pass
-
-
-def extract_text(*args, **kwargs):
-    raise OcrParseError(
-        "OCR non disponible sur mobile pour l'instant "
-        "(remplacement par ML Kit prevu en Phase 2)."
-    )
-
-
-def clean_text(text):
+def clean_text(text: str) -> str:
+    """Nettoyage léger du texte brut lu par l'OCR : espaces superflus."""
+    text = text.strip()
+    text = re.sub(r"\s+", " ", text)
     return text
 
 
-def to_canonical_expression(*args, **kwargs):
-    raise OcrParseError(
-        "OCR non disponible sur mobile pour l'instant "
-        "(remplacement par ML Kit prevu en Phase 2)."
-    )
+_REPLACEMENTS = {
+    "×": "*", "÷": "/", "—": "-", "–": "-", "−": "-",
+    "‐": "-", "’": "'", "‘": "'", "“": '"', "”": '"',
+}
+
+
+def to_canonical_expression(raw_text: str) -> str:
+    """Convertit un texte OCR brut vers une notation que le moteur sait
+    analyser. Le moteur accepte déjà la multiplication implicite et "^"
+    (voir engine/equations.py), donc peu de transformation est nécessaire
+    au-delà du nettoyage des caractères visuellement proches que l'OCR
+    confond souvent."""
+    text = clean_text(raw_text)
+    if not text:
+        raise OcrParseError("Aucun texte à convertir.")
+    for bad, good in _REPLACEMENTS.items():
+        text = text.replace(bad, good)
+    return text
