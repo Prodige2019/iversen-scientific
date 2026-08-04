@@ -33,8 +33,10 @@ def _recognize(image_path):
         raise OcrParseError("Image illisible (format non reconnu ou fichier corrompu).")
     image = InputImage.fromBitmap(bitmap, 0)
     task = _get_recognizer().process(image)
+    # "await" est un mot reserve en Python : on ne peut pas ecrire
+    # Tasks.await(task) directement, il faut passer par getattr().
     try:
-        return Tasks.await(task)
+        return getattr(Tasks, "await")(task)
     except Exception as e:
         raise OcrParseError(f"Échec de la reconnaissance de texte : {e}")
 
