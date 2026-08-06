@@ -1,64 +1,80 @@
 """
-Rédacteur pédagogique pour les systèmes de 2 équations linéaires — méthode de
-substitution reconstituée pas à pas, cohérente avec le résultat déjà validé par
-sp.linsolve() dans engine/systems.py.
+Rédacteur pédagogique pour les systèmes d'équations linéaires (2, 3, 4
+équations, autant d'inconnues parmi x, y, z, t) — généralisé, remplace la
+version limitée à 2 équations en x, y.
 """
 import sympy as sp
 from sympy import latex
-from .systems import SystemAnalysis, x, y
+from .systems import SystemAnalysis
 from .models import Correction, Step
 
 
-def write_system_correction(exercise_title: str, equation1_str: str, equation2_str: str,
-                             analysis: SystemAnalysis) -> Correction:
-    system_label = f"{equation1_str}  ;  {equation2_str}"
-    correction = Correction(exercise_title=exercise_title, function_str=system_label,
-                             subject_line=f"Système : {{ {equation1_str} ; {equation2_str} }}")
+def write_system_correction(exercise_title: str, equation_strs, analysis: SystemAnalysis) -> Correction:
+    system_label = "  ;  ".join(equation_strs)
+    var_names = ", ".join(str(v) for v in analysis.variables)
+    correction = Correction(
+        exercise_title=exercise_title, function_str=system_label,
+        subject_line=f"Système ({len(equation_strs)} équations, inconnues : {var_names}) : {{ {system_label} }}",
+    )
 
+    cases_body = " \\\\ ".join(f"{latex(eq.lhs)} = {latex(eq.rhs)}" for eq in analysis.equations)
     correction.add(Step(
         title="Mise en évidence du système",
-        result_latex=f"\\begin{{cases}} {latex(analysis.eq1.lhs)} = {latex(analysis.eq1.rhs)} \\\\ {latex(analysis.eq2.lhs)} = {latex(analysis.eq2.rhs)} \\end{{cases}}",
-        explanation="On dispose de deux équations à deux inconnues (x et y) : il faut les combiner pour trouver les valeurs qui vérifient les deux simultanément.",
+        result_latex=f"\\begin{{cases}} {cases_body} \\end{{cases}}",
+        explanation=(
+            f"On dispose de {len(analysis.equations)} équations à {len(analysis.variables)} "
+            f"inconnue(s) ({var_names}) : il faut trouver les valeurs qui vérifient "
+            f"toutes les équations simultanément."
+        ),
         weight=1.0,
     ))
 
     if analysis.kind == "unique":
-        sv, ov = analysis.substitution_variable, analysis.other_variable
         correction.add(Step(
-            title=f"Isolement de {sv} dans la première équation",
-            result_latex=f"{sv} = {latex(analysis.substitution_expr)}",
-            explanation=f"On exprime {sv} en fonction de {ov} à partir de la première équation, pour pouvoir le remplacer dans la seconde (méthode de substitution).",
-            rule_recalled="\\text{Méthode de substitution : isoler une inconnue dans une équation, la remplacer dans l'autre.}",
-            weight=2.0,
+            title="Résolution du système",
+            result_latex=(
+                "\\text{Résolution par élimination/substitution successive "
+                "(méthode générale), le résultat étant obtenu par calcul "
+                "matriciel exact (SymPy).}"
+            ),
+            explanation=(
+                "Pour un système à plusieurs équations et plusieurs inconnues, "
+                "la méthode générale consiste à éliminer les inconnues une par "
+                "une (par combinaison ou substitution) jusqu'à n'en garder "
+                "qu'une seule à résoudre, puis remonter par substitutions "
+                "successives pour retrouver toutes les autres."
+            ),
+            rule_recalled=(
+                "\\text{Un système linéaire admet 0, 1, ou une infinité de "
+                "solutions — jamais un nombre fini strictement supérieur à 1.}"
+            ),
+            weight=2.5,
         ))
-        substituted_eq2 = sp.simplify(analysis.eq2.lhs.subs(sv, analysis.substitution_expr) - analysis.eq2.rhs.subs(sv, analysis.substitution_expr))
-        correction.add(Step(
-            title="Substitution dans la seconde équation",
-            result_latex=f"{latex(substituted_eq2)} = 0 \\quad \\Rightarrow \\quad {ov} = {latex(analysis.other_value)}",
-            explanation=f"En remplaçant {sv} par son expression dans la deuxième équation, on obtient une équation à une seule inconnue ({ov}), qu'on résout directement.",
-            weight=2.0,
-        ))
-        correction.add(Step(
-            title=f"Retour pour trouver {sv}",
-            result_latex=f"{sv} = {latex(analysis.substitution_expr)} = {latex(analysis.substitution_value)}",
-            explanation=f"On substitue la valeur de {ov} trouvée dans l'expression de {sv} obtenue à la première étape.",
-            weight=1.5,
-        ))
-        x_val = analysis.other_value if ov == x else analysis.substitution_value
-        y_val = analysis.other_value if ov == y else analysis.substitution_value
+
+        solution_parts = ", \\ ".join(
+            f"{latex(var)} = {latex(val)}" for var, val in analysis.solution.items()
+        )
         correction.add(Step(
             title="Solution du système",
-            result_latex=f"\\mathcal{{S}} = \\left\\{{ ({latex(x_val)} \\, ; \\, {latex(y_val)}) \\right\\}}",
-            explanation="Le système admet un unique couple solution (x ; y).",
+            result_latex=f"\\mathcal{{S}} = \\left\\{{ ({solution_parts}) \\right\\}}",
+            explanation=f"Le système admet un unique {len(analysis.variables)}-uplet solution.",
             weight=1.5,
         ))
-        check1 = sp.simplify(analysis.eq1.lhs.subs({x: x_val, y: y_val}) - analysis.eq1.rhs.subs({x: x_val, y: y_val}))
-        check2 = sp.simplify(analysis.eq2.lhs.subs({x: x_val, y: y_val}) - analysis.eq2.rhs.subs({x: x_val, y: y_val}))
+
+        checks = []
+        all_ok = True
+        for i, eq in enumerate(analysis.equations, start=1):
+            check = sp.simplify(eq.lhs.subs(analysis.solution) - eq.rhs.subs(analysis.solution))
+            ok = check == 0
+            all_ok = all_ok and ok
+            checks.append(f"\\text{{éq. {i} : }} {latex(check)} = 0" if ok else f"\\text{{éq. {i} : ÉCART }} {latex(check)}")
         correction.add(Step(
             title="Vérification",
-            result_latex=f"\\text{{éq. 1 : }} {latex(check1)} = 0 \\qquad \\text{{éq. 2 : }} {latex(check2)} = 0",
-            explanation="On substitue la solution trouvée dans les deux équations de départ : les deux doivent bien redonner 0.",
+            result_latex=" \\qquad ".join(checks),
+            explanation="On substitue la solution trouvée dans toutes les équations de départ : chacune doit bien redonner une égalité vraie.",
             weight=1.0,
+            is_complete=all_ok,
+            warning=None if all_ok else "Incohérence détectée — ne devrait normalement jamais se produire.",
         ))
 
     elif analysis.kind == "aucune":
@@ -66,10 +82,10 @@ def write_system_correction(exercise_title: str, equation1_str: str, equation2_s
             title="Système incompatible",
             result_latex="\\mathcal{S} = \\varnothing",
             explanation=(
-                "En combinant les deux équations, on aboutit à une égalité fausse "
-                "(par exemple 0 = k avec k ≠ 0) : les deux droites représentées par "
-                "ces équations sont strictement parallèles (même coefficient directeur, "
-                "ordonnées à l'origine différentes) et ne se croisent jamais."
+                "En combinant les équations, on aboutit à une égalité fausse "
+                "(par exemple 0 = k avec k ≠ 0) : les conditions imposées par "
+                "le système sont contradictoires, il n'existe aucune solution "
+                "commune."
             ),
             weight=2.5,
         ))
@@ -77,12 +93,13 @@ def write_system_correction(exercise_title: str, equation1_str: str, equation2_s
     else:  # infinité
         correction.add(Step(
             title="Système indéterminé",
-            result_latex=f"\\mathcal{{S}} = \\left\\{{ ({analysis.general_solution}) \\right\\}}",
+            result_latex=f"\\mathcal{{S}} : \\ {analysis.general_solution}",
             explanation=(
-                "Les deux équations sont en réalité équivalentes (l'une est un multiple "
-                "de l'autre) : elles décrivent la même droite. Tout couple (x, y) vérifiant "
-                "l'une des deux équations vérifie automatiquement l'autre — il y a une "
-                "infinité de solutions, décrites par un paramètre libre."
+                "Le nombre d'équations réellement indépendantes est inférieur "
+                "au nombre d'inconnues : au moins une inconnue reste libre "
+                "(elle peut prendre n'importe quelle valeur réelle), les autres "
+                "s'exprimant en fonction d'elle. Il y a donc une infinité de "
+                "solutions."
             ),
             weight=2.5,
         ))
