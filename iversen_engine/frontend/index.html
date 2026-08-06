@@ -165,6 +165,7 @@
         <button class="tab-btn" data-tab="equation" onclick="switchTab('equation')">Équation</button>
         <button class="tab-btn" data-tab="inequality" onclick="switchTab('inequality')">Inéquation</button>
         <button class="tab-btn" data-tab="system" onclick="switchTab('system')">Système</button>
+        <button class="tab-btn" data-tab="integral" onclick="switchTab('integral')">Intégrale</button>
         <button class="tab-btn" data-tab="sequence" onclick="switchTab('sequence')">Suite</button>
         <button class="tab-btn" data-tab="binomial" onclick="switchTab('binomial')">Loi binomiale</button>
         <button class="tab-btn" data-tab="complex" onclick="switchTab('complex')">Complexes</button>
@@ -225,12 +226,39 @@
   </div>
 
   <div class="tab-panel" id="tab-system">
-    <div class="input-card">
-      <label for="sys1">Système :</label>
-      <input type="text" id="sys1" value="2x + y = 5" spellcheck="false" style="max-width:220px;">
-      <input type="text" id="sys2" value="x - y = 1" spellcheck="false" style="max-width:220px;">
-      <button class="btn btn-primary" onclick="runSystem()">Résoudre</button>
+    <div class="input-card" style="align-items:flex-start; flex-direction:column;">
+      <div id="systemEquationsList" style="display:flex; flex-direction:column; gap:8px; width:100%;">
+        <div style="display:flex; gap:8px; align-items:center;">
+          <label style="min-width:60px;">Éq. 1 :</label>
+          <input type="text" class="sysEqInput" value="2x + y = 5" spellcheck="false" style="max-width:260px;">
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <label style="min-width:60px;">Éq. 2 :</label>
+          <input type="text" class="sysEqInput" value="x - y = 1" spellcheck="false" style="max-width:260px;">
+          <button class="btn btn-ghost" onclick="removeSystemEquation(this)" title="Retirer cette équation">✕</button>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:12px;">
+        <button class="btn btn-ghost" onclick="addSystemEquation()">➕ Ajouter une équation</button>
+        <button class="btn btn-primary" onclick="runSystem()">Résoudre</button>
+      </div>
       <div class="examples" id="systemExamples"></div>
+    </div>
+  </div>
+
+  <div class="tab-panel" id="tab-integral">
+    <div class="input-card">
+      <label for="intFn">f(x) =</label>
+      <input type="text" id="intFn" value="x² + 3x" spellcheck="false" style="max-width:220px;">
+      <label for="intA">borne a (optionnel) =</label>
+      <input type="text" id="intA" value="" spellcheck="false" style="max-width:90px;" placeholder="ex: 0">
+      <label for="intB">borne b =</label>
+      <input type="text" id="intB" value="" spellcheck="false" style="max-width:90px;" placeholder="ex: 3">
+      <button class="btn btn-primary" onclick="runIntegral()">Calculer</button>
+      <div class="examples" id="integralExamples"></div>
+    </div>
+    <div class="input-card" style="font-size:12px; color:var(--ink-soft);">
+      Laisse les deux bornes vides pour obtenir seulement une primitive F(x). Renseigne les deux (a et b) pour calculer l'intégrale définie (l'aire algébrique entre a et b).
     </div>
   </div>
 
@@ -476,7 +504,7 @@ const _SUPER_MAP_INV = {'⁰':'0','¹':'1','²':'2','³':'3','⁴':'4','⁵':'5'
 
 function toDisplayJS(s){
   if(!s) return s;
-  s = s.replace(/([A-Za-z0-9\)])\*\*(\d+)/g, (m, a, b) => a + b.split('').map(c => _SUPER_MAP[c]).join(''));
+  s = s.replace(/([A-Za-z0-9\)])(\*\*|\^)(\d+)/g, (m, a, op, b) => a + b.split('').map(c => _SUPER_MAP[c]).join(''));
   s = s.replace(/(\d)\*([A-Za-z\(])/g, '$1$2');
   s = s.replace(/\*/g, '×');
   return s;
@@ -1144,6 +1172,64 @@ async function runInequality(){
   }
 }
 
+// --- Système : gestion dynamique des lignes d'équations (2, 3, 4...) ---
+function addSystemEquation(){
+  const list = document.getElementById('systemEquationsList');
+  const n = list.children.length + 1;
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex; gap:8px; align-items:center;';
+  row.innerHTML = `
+    <label style="min-width:60px;">Éq. ${n} :</label>
+    <input type="text" class="sysEqInput" spellcheck="false" style="max-width:260px;">
+    <button class="btn btn-ghost" onclick="removeSystemEquation(this)" title="Retirer cette équation">✕</button>`;
+  list.appendChild(row);
+  const newInput = row.querySelector('.sysEqInput');
+  newInput.addEventListener('input', () => liveFormatExponents(newInput));
+  newInput.addEventListener('blur', () => liveFormatExponentsOnBlur(newInput));
+  renumberSystemEquations();
+}
+
+function removeSystemEquation(buttonEl){
+  const list = document.getElementById('systemEquationsList');
+  if(list.children.length <= 2){
+    alert("Un système doit contenir au moins 2 équations.");
+    return;
+  }
+  buttonEl.closest('div').remove();
+  renumberSystemEquations();
+}
+
+function renumberSystemEquations(){
+  const rows = document.querySelectorAll('#systemEquationsList > div');
+  rows.forEach((row, i) => {
+    row.querySelector('label').textContent = `Éq. ${i+1} :`;
+  });
+}
+
+function getSystemEquations(){
+  return Array.from(document.querySelectorAll('.sysEqInput'))
+    .map(el => toComputable(el.value.trim()))
+    .filter(Boolean);
+}
+
+function setSystemEquations(rawEquations){
+  const list = document.getElementById('systemEquationsList');
+  list.innerHTML = '';
+  rawEquations.forEach((eqText, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; gap:8px; align-items:center;';
+    const removeBtn = i < 2 ? '' : `<button class="btn btn-ghost" onclick="removeSystemEquation(this)" title="Retirer cette équation">✕</button>`;
+    row.innerHTML = `
+      <label style="min-width:60px;">Éq. ${i+1} :</label>
+      <input type="text" class="sysEqInput" spellcheck="false" style="max-width:260px;" value="${eqText}">
+      ${removeBtn}`;
+    list.appendChild(row);
+    const inp = row.querySelector('.sysEqInput');
+    inp.addEventListener('input', () => liveFormatExponents(inp));
+    inp.addEventListener('blur', () => liveFormatExponentsOnBlur(inp));
+  });
+}
+
 async function loadSystemExamples(){
   try{
     const r = await fetch(API + "/api/system-examples");
@@ -1155,8 +1241,7 @@ async function loadSystemExamples(){
       chip.className = 'example-chip';
       chip.textContent = ex.title;
       chip.onclick = () => {
-        document.getElementById('sys1').value = ex.display1 || ex.equation1_str;
-        document.getElementById('sys2').value = ex.display2 || ex.equation2_str;
+        setSystemEquations(ex.displays || ex.equations);
         runSystem();
       };
       box.appendChild(chip);
@@ -1167,19 +1252,71 @@ async function loadSystemExamples(){
 async function runSystem(){
   window.__lastFunctionStr = null;
   const panel = document.getElementById('panel');
-  const eq1 = toComputable(document.getElementById('sys1').value.trim());
-  const eq2 = toComputable(document.getElementById('sys2').value.trim());
-  if(!eq1 || !eq2) return;
+  const equations = getSystemEquations();
+  if(equations.length < 2) return;
   panel.innerHTML = '<div class="loading">Résolution en cours…</div>';
   try{
     const r = await fetch(API + "/api/solve-system", {
       method: "POST",
       headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ equation1_str: eq1, equation2_str: eq2, exercise_title: "Résolution du système" })
+      body: JSON.stringify({ equations: equations, exercise_title: "Résolution du système" })
     });
     if(!r.ok){
       const err = await r.json();
       panel.innerHTML = `<div class="error">${err.detail || "Erreur de résolution"}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderCorrection(data);
+  }catch(e){
+    panel.innerHTML = '<div class="error">Impossible de joindre le backend.</div>';
+  }
+}
+
+// --- Intégrales ---
+async function loadIntegralExamples(){
+  try{
+    const r = await fetch(API + "/api/integral-examples");
+    const list = await r.json();
+    const box = document.getElementById('integralExamples');
+    box.innerHTML = "";
+    list.forEach(ex => {
+      const chip = document.createElement('span');
+      chip.className = 'example-chip';
+      chip.textContent = ex.title;
+      chip.onclick = () => {
+        document.getElementById('intFn').value = ex.display || ex.function_str;
+        document.getElementById('intA').value = ex.a_str || "";
+        document.getElementById('intB').value = ex.b_str || "";
+        runIntegral();
+      };
+      box.appendChild(chip);
+    });
+  }catch(e){ /* backend pas encore démarré */ }
+}
+
+async function runIntegral(){
+  window.__lastFunctionStr = null;
+  const panel = document.getElementById('panel');
+  const fn = toComputable(document.getElementById('intFn').value.trim());
+  const aRaw = document.getElementById('intA').value.trim();
+  const bRaw = document.getElementById('intB').value.trim();
+  if(!fn) return;
+  panel.innerHTML = '<div class="loading">Calcul en cours…</div>';
+  try{
+    const r = await fetch(API + "/api/analyze-integral", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        function_str: fn,
+        a_str: aRaw || null,
+        b_str: bRaw || null,
+        exercise_title: "Calcul intégral",
+      })
+    });
+    if(!r.ok){
+      const err = await r.json();
+      panel.innerHTML = `<div class="error">${err.detail || "Erreur de calcul"}</div>`;
       return;
     }
     const data = await r.json();
@@ -1733,6 +1870,7 @@ loadExamples();
 loadEquationExamples();
 loadInequalityExamples();
 loadSystemExamples();
+loadIntegralExamples();
 loadSequenceExamples();
 loadBinomialExamples();
 loadComplexExamples();
@@ -1744,8 +1882,14 @@ loadKinematicsExamples();
 loadOpticsExamples();
 loadStoichiometryExamples();
 loadThermoExamples();
-attachLiveExponentFormatting(['fn', 'eq', 'ineq', 'sys1', 'sys2']);
+attachLiveExponentFormatting(['fn', 'eq', 'ineq', 'intFn', 'intA', 'intB']);
 attachLiveSubscriptFormatting(['chemEq', 'stoEq', 'stoCompound', 'seqU0', 'seqRec']);
+// Champs d'equations du systeme : generes dynamiquement (2 au depart, dans
+// le HTML), le formatage live est attache individuellement a chacun.
+document.querySelectorAll('.sysEqInput').forEach(inp => {
+  inp.addEventListener('input', () => liveFormatExponents(inp));
+  inp.addEventListener('blur', () => liveFormatExponentsOnBlur(inp));
+});
 </script>
 </body>
 </html>
