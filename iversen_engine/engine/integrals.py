@@ -1,74 +1,54 @@
 """
-Rédacteur pédagogique pour le calcul de primitives et d'intégrales définies.
+Moteur de calcul intégral : primitives (intégrale indéfinie) et intégrale
+définie (aire algébrique entre a et b) pour une fonction f(x).
 """
+from dataclasses import dataclass
+from typing import Optional
 import sympy as sp
-from .integrals import IntegralAnalysis
-from .models import Correction, Step
+from .equations import x, normalize_variable_case, parse_math_expression
 
 
-def write_integral_correction(exercise_title: str, function_str: str, analysis: IntegralAnalysis) -> Correction:
-    if analysis.is_definite:
-        subject = f"\\int_{{{sp.latex(analysis.a)}}}^{{{sp.latex(analysis.b)}}} {function_str}\\,dx"
-    else:
-        subject = f"\\int {function_str}\\,dx"
-    correction = Correction(exercise_title=exercise_title, function_str=function_str, subject_line=subject)
+@dataclass
+class IntegralAnalysis:
+    function: sp.Expr
+    primitive: sp.Expr
+    is_definite: bool
+    a: Optional[sp.Expr] = None
+    b: Optional[sp.Expr] = None
+    value: Optional[sp.Expr] = None
 
-    correction.add(Step(
-        title="Fonction à intégrer",
-        result_latex=f"f(x) = {sp.latex(analysis.function)}",
-        explanation=(
-            "On identifie la fonction dont on cherche une primitive (ou "
-            "l'aire algébrique sous la courbe, si des bornes sont données)."
-        ),
-        weight=1.0,
-    ))
 
-    correction.add(Step(
-        title="Calcul d'une primitive",
-        result_latex=f"F(x) = {sp.latex(analysis.primitive)} + C",
-        explanation=(
-            "On cherche une fonction F telle que F'(x) = f(x), en utilisant "
-            "les primitives usuelles (puissances, exponentielle, logarithme, "
-            "fonctions trigonométriques...) et les règles de linéarité. La "
-            "constante C est arbitraire : F n'est définie qu'à une constante "
-            "additive près."
-        ),
-        rule_recalled="\\text{Deux primitives d'une même fonction diffèrent toujours d'une constante.}",
-        weight=2.5,
-    ))
+def analyze_integral(function_str: str, a_str: Optional[str] = None, b_str: Optional[str] = None) -> IntegralAnalysis:
+    try:
+        f = parse_math_expression(normalize_variable_case(function_str), {"x": x})
+    except (sp.SympifyError, TypeError, SyntaxError) as e:
+        raise ValueError(f"Fonction illisible : « {function_str} ». Détail : {e}")
 
-    if analysis.is_definite:
-        fb = analysis.primitive.subs(sp.Symbol("x"), analysis.b)
-        fa = analysis.primitive.subs(sp.Symbol("x"), analysis.a)
-        correction.add(Step(
-            title="Application du théorème fondamental de l'analyse",
-            result_latex=(
-                f"\\int_{{{sp.latex(analysis.a)}}}^{{{sp.latex(analysis.b)}}} f(x)\\,dx "
-                f"= F({sp.latex(analysis.b)}) - F({sp.latex(analysis.a)}) "
-                f"= {sp.latex(fb)} - \\left( {sp.latex(fa)} \\right)"
-            ),
-            explanation=(
-                "Pour une intégrale définie entre a et b, on évalue une "
-                "primitive F en b, on lui soustrait sa valeur en a — le choix "
-                "de la constante C n'a aucune importance ici, elle s'annule "
-                "dans la soustraction."
-            ),
-            rule_recalled="\\int_a^b f(x)\\,dx = F(b) - F(a)",
-            weight=2.0,
-        ))
-        correction.add(Step(
-            title="Résultat",
-            result_latex=(
-                f"\\int_{{{sp.latex(analysis.a)}}}^{{{sp.latex(analysis.b)}}} "
-                f"f(x)\\,dx = {sp.latex(analysis.value)}"
-            ),
-            explanation=(
-                "Cette valeur représente l'aire algébrique entre la courbe de "
-                "f et l'axe des abscisses sur [a, b] — négative si la courbe "
-                "est sous l'axe sur cette portion."
-            ),
-            weight=1.5,
-        ))
+    try:
+        primitive = sp.integrate(f, x)
+    except Exception as e:
+        raise ValueError(f"Impossible de calculer une primitive de cette fonction : {e}")
 
-    correction.compute_score()
-    return correction
+    if isinstance(primitive, sp.Integral) or primitive.has(sp.Integral):
+        raise ValueError(
+            "Cette fonction n'admet pas de primitive exprimable avec les "
+            "fonctions usuelles (pas de forme fermée connue)."
+        )
+
+    is_definite = a_str is not None and b_str is not None and a_str != "" and b_str != ""
+    a_val = b_val = value = None
+    if is_definite:
+        try:
+            a_val = parse_math_expression(normalize_variable_case(a_str), {"x": x})
+            b_val = parse_math_expression(normalize_variable_case(b_str), {"x": x})
+        except (sp.SympifyError, TypeError, SyntaxError) as e:
+            raise ValueError(f"Bornes illisibles. Détail : {e}")
+        try:
+            value = sp.simplify(primitive.subs(x, b_val) - primitive.subs(x, a_val))
+        except Exception as e:
+            raise ValueError(f"Calcul de l'intégrale définie impossible : {e}")
+
+    return IntegralAnalysis(
+        function=f, primitive=primitive, is_definite=is_definite,
+        a=a_val, b=b_val, value=value,
+    )
