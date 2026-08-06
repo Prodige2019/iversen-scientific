@@ -29,6 +29,8 @@ from .chemistry_stoichiometry import analyze_stoichiometry
 from .writer_stoichiometry import write_stoichiometry_correction
 from .physics_thermodynamics import analyze_sensible_heat, analyze_latent_heat
 from .writer_physics_thermodynamics import write_thermodynamics_correction
+from .integrals import analyze_integral
+from .writer_integrals import write_integral_correction
 
 __all__ = [
     "analyze", "write_correction", "render_text", "render_markdown", "correction_to_dict",
@@ -47,4 +49,5 @@ __all__ = [
     "analyze_thin_lens", "write_optics_correction",
     "analyze_stoichiometry", "write_stoichiometry_correction",
     "analyze_sensible_heat", "analyze_latent_heat", "write_thermodynamics_correction",
+    "analyze_integral", "write_integral_correction",
 ]
