@@ -1,30 +1,33 @@
 """
-Moteur de résolution de systèmes de 2 équations linéaires à 2 inconnues (x, y) —
-même philosophie que le reste du projet : la méthode de substitution est reconstruite
-pas à pas pour la pédagogie, mais l'ensemble solution final vient toujours de
-sp.linsolve() (SymPy), qui gère nativement les 3 cas (solution unique, aucune solution,
-infinité de solutions) de façon fiable.
+Moteur de résolution de systèmes d'équations linéaires à n inconnues
+(x, y, z, t) — généralisé : supporte 2, 3, 4 équations (et inconnues),
+pas seulement le cas x/y à 2 équations d'avant.
+
+La méthode utilisée est la même philosophie que le reste du projet :
+sp.linsolve() est la source de vérité pour le résultat (gère nativement
+les 3 cas : solution unique, aucune solution, infinité de solutions),
+avec une reconstruction pédagogique des étapes autour.
 """
 from tokenize import TokenError
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional
 import sympy as sp
 from .equations import normalize_variable_case, parse_math_expression
 
-x, y = sp.symbols("x y", real=True)
+# Jeu de variables reconnues, dans l'ordre d'introduction habituel en
+# mathématiques francophones. Au-delà de 4 inconnues, ce n'est plus un
+# exercice de lycée — x, y, z, t couvrent tout le programme de Terminale.
+_VARIABLE_NAMES = ["x", "y", "z", "t"]
+_ALL_SYMBOLS = {name: sp.symbols(name, real=True) for name in _VARIABLE_NAMES}
 
 
 @dataclass
 class SystemAnalysis:
-    eq1: sp.Eq
-    eq2: sp.Eq
-    kind: str                          # "unique" | "aucune" | "infinité"
-    substitution_variable: Optional[sp.Symbol] = None   # variable isolée en premier (x ou y)
-    substitution_expr: Optional[sp.Expr] = None         # son expression en fonction de l'autre
-    other_variable: Optional[sp.Symbol] = None
-    other_value: Optional[sp.Expr] = None                # valeur numérique trouvée pour l'autre variable
-    substitution_value: Optional[sp.Expr] = None         # valeur numérique déduite pour la variable isolée
-    general_solution: Optional[str] = None               # description textuelle si infinité de solutions
+    equations: List[sp.Eq]
+    variables: List[sp.Symbol]
+    kind: str                                            # "unique" | "aucune" | "infinité"
+    solution: Optional[Dict[sp.Symbol, sp.Expr]] = None   # rempli si kind == "unique"
+    general_solution: Optional[str] = None                # rempli si kind == "infinité"
 
 
 def _parse_linear_equation(equation_str: str, label: str) -> sp.Eq:
@@ -32,70 +35,66 @@ def _parse_linear_equation(equation_str: str, label: str) -> sp.Eq:
         raise ValueError(f"L'équation {label} doit contenir un « = » (reçu : « {equation_str} »).")
     left_str, right_str = equation_str.split("=", 1)
     try:
-        lhs = parse_math_expression(normalize_variable_case(left_str.strip()), {"x": x, "y": y})
-        rhs = parse_math_expression(normalize_variable_case(right_str.strip()), {"x": x, "y": y})
+        lhs = parse_math_expression(normalize_variable_case(left_str.strip()), _ALL_SYMBOLS)
+        rhs = parse_math_expression(normalize_variable_case(right_str.strip()), _ALL_SYMBOLS)
     except (sp.SympifyError, TypeError, SyntaxError, TokenError) as e:
         raise ValueError(f"Équation {label} illisible : « {equation_str} ». Détail : {e}")
-    expr = lhs - rhs
-    if not expr.free_symbols <= {x, y}:
-        raise ValueError(
-            f"L'équation {label} doit porter uniquement sur x et y (reçu : « {equation_str} »)."
-        )
-    try:
-        poly = sp.Poly(expr, x, y)
-        if poly.total_degree() > 1:
-            raise ValueError(f"L'équation {label} n'est pas linéaire (reçu : « {equation_str} »).")
-    except sp.PolynomialError:
-        raise ValueError(f"L'équation {label} n'est pas polynomiale en x, y (reçu : « {equation_str} »).")
     return sp.Eq(lhs, rhs)
 
 
-def parse_system(equation1_str: str, equation2_str: str) -> Tuple[sp.Eq, sp.Eq]:
-    eq1 = _parse_linear_equation(equation1_str, "1")
-    eq2 = _parse_linear_equation(equation2_str, "2")
-    return eq1, eq2
+def parse_system(equation_strs: List[str]):
+    if len(equation_strs) < 2:
+        raise ValueError("Un système doit contenir au moins 2 équations.")
+
+    equations = [_parse_linear_equation(s, str(i)) for i, s in enumerate(equation_strs, start=1)]
+
+    used_symbols = set()
+    for eq in equations:
+        used_symbols |= (eq.lhs - eq.rhs).free_symbols
+
+    unsupported = used_symbols - set(_ALL_SYMBOLS.values())
+    if unsupported:
+        names = ", ".join(sorted(str(s) for s in unsupported))
+        raise ValueError(f"Variable(s) non reconnue(s) : {names}. Seules x, y, z, t sont supportées.")
+
+    variables = [_ALL_SYMBOLS[name] for name in _VARIABLE_NAMES if _ALL_SYMBOLS[name] in used_symbols]
+    if not variables:
+        raise ValueError("Aucune inconnue détectée dans ce système.")
+
+    for i, eq in enumerate(equations, start=1):
+        expr = eq.lhs - eq.rhs
+        try:
+            poly = sp.Poly(expr, *variables)
+            if poly.total_degree() > 1:
+                raise ValueError(f"L'équation {i} n'est pas linéaire (reçu : « {equation_strs[i-1]} »).")
+        except sp.PolynomialError:
+            raise ValueError(
+                f"L'équation {i} n'est pas polynomiale en {', '.join(str(v) for v in variables)}."
+            )
+
+    return equations, variables
 
 
-def solve_system(equation1_str: str, equation2_str: str) -> SystemAnalysis:
-    eq1, eq2 = parse_system(equation1_str, equation2_str)
+def solve_system(equation_strs: List[str]) -> SystemAnalysis:
+    equations, variables = parse_system(equation_strs)
 
-    # source de vérité pour le résultat final : sp.linsolve
-    solution_set = sp.linsolve([eq1, eq2], [x, y])
+    solution_set = sp.linsolve(equations, variables)
 
     if solution_set == sp.S.EmptySet:
-        return SystemAnalysis(eq1=eq1, eq2=eq2, kind="aucune")
+        return SystemAnalysis(equations=equations, variables=variables, kind="aucune")
 
-    (sol_x, sol_y), = solution_set
-    if sol_x.free_symbols or sol_y.free_symbols:
-        # infinité de solutions : système dégénéré (les deux équations décrivent la même droite)
-        if sol_x.free_symbols and not sol_y.free_symbols:
-            general = f"x = {sp.latex(sol_x)}, \\ y = {sp.latex(sol_y)} \\text{{ (libre)}}"
-        elif sol_y.free_symbols and not sol_x.free_symbols:
-            general = f"x = {sp.latex(sol_x)} \\text{{ (libre)}}, \\ y = {sp.latex(sol_y)}"
-        else:
-            # le paramètre libre est l'une des deux inconnues elles-mêmes (cas le plus
-            # courant : sol_y = y) — on l'affiche comme un paramètre t plutôt que "y = y"
-            free_sym = next(iter(sol_x.free_symbols | sol_y.free_symbols))
-            general = f"x = {sp.latex(sol_x.subs(free_sym, sp.Symbol('t')))}, \\ y = {sp.latex(sol_y.subs(free_sym, sp.Symbol('t')))}, \\ t \\in \\mathbb{{R}}"
-        return SystemAnalysis(eq1=eq1, eq2=eq2, kind="infinité", general_solution=general)
+    (solution_tuple,) = solution_set
+    has_free = any(val.free_symbols for val in solution_tuple)
 
-    # reconstruction pédagogique de la méthode de substitution, cohérente avec le
-    # résultat déjà connu (sol_x, sol_y) : on choisit d'isoler y depuis eq1 si possible
-    # (coefficient non nul), sinon x depuis eq1, pour présenter une démarche naturelle.
-    coeff_y_eq1 = eq1.lhs.coeff(y) - eq1.rhs.coeff(y)
-    if coeff_y_eq1 != 0:
-        sub_var, other_var = y, x
-        sub_expr = sp.solve(eq1, y)[0]
-    else:
-        sub_var, other_var = x, y
-        sub_expr = sp.solve(eq1, x)[0]
+    if has_free:
+        parts = []
+        for var, val in zip(variables, solution_tuple):
+            if val == var:
+                parts.append(f"{sp.latex(var)} \\ \\text{{libre}}")
+            else:
+                parts.append(f"{sp.latex(var)} = {sp.latex(val)}")
+        general = ", \\ ".join(parts)
+        return SystemAnalysis(equations=equations, variables=variables, kind="infinité", general_solution=general)
 
-    other_value = sol_x if other_var == x else sol_y
-    sub_value = sol_y if sub_var == y else sol_x
-
-    return SystemAnalysis(
-        eq1=eq1, eq2=eq2, kind="unique",
-        substitution_variable=sub_var, substitution_expr=sub_expr,
-        other_variable=other_var, other_value=other_value,
-        substitution_value=sub_value,
-    )
+    solution = dict(zip(variables, solution_tuple))
+    return SystemAnalysis(equations=equations, variables=variables, kind="unique", solution=solution)
