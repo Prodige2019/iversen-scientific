@@ -36,6 +36,7 @@ from engine import (
     analyze_thin_lens, write_optics_correction,
     analyze_stoichiometry, write_stoichiometry_correction,
     analyze_sensible_heat, analyze_latent_heat, write_thermodynamics_correction,
+    analyze_integral, write_integral_correction,
 )
 from ocr import extract_text, clean_text, to_canonical_expression, OcrParseError
 from ocr.reader import extract_line_candidates
@@ -98,9 +99,15 @@ class InequalityRequest(BaseModel):
 
 
 class SystemRequest(BaseModel):
-    equation1_str: str
-    equation2_str: str
+    equations: list  # liste de chaines "a*x + b*y + ... = c" — 2, 3, 4 equations
     exercise_title: str = "Résolution de système"
+
+
+class IntegralRequest(BaseModel):
+    function_str: str
+    a_str: Optional[str] = None  # borne inferieure ; absente => primitive seule
+    b_str: Optional[str] = None  # borne superieure
+    exercise_title: str = "Calcul intégral"
 
 
 class SequenceRequest(BaseModel):
@@ -250,8 +257,8 @@ def solve_inequality_endpoint(req: InequalityRequest):
 @app.post("/api/solve-system")
 def solve_system_endpoint(req: SystemRequest):
     def _run():
-        analysis = solve_system(req.equation1_str, req.equation2_str)
-        return write_system_correction(req.exercise_title, req.equation1_str, req.equation2_str, analysis)
+        analysis = solve_system(req.equations)
+        return write_system_correction(req.exercise_title, req.equations, analysis)
 
     try:
         future = _executor.submit(_run)
@@ -262,6 +269,25 @@ def solve_system_endpoint(req: SystemRequest):
         raise HTTPException(
             status_code=422,
             detail="Ce système est trop complexe pour être résolu automatiquement dans le temps imparti.",
+        )
+    return correction_to_dict(correction)
+
+
+@app.post("/api/analyze-integral")
+def analyze_integral_endpoint(req: IntegralRequest):
+    def _run():
+        analysis = analyze_integral(req.function_str, req.a_str, req.b_str)
+        return write_integral_correction(req.exercise_title, req.function_str, analysis)
+
+    try:
+        future = _executor.submit(_run)
+        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Ce calcul intégral est trop complexe pour être résolu automatiquement dans le temps imparti.",
         )
     return correction_to_dict(correction)
 
@@ -778,13 +804,26 @@ def sequence_examples():
 @app.get("/api/system-examples")
 def system_examples():
     raw = [
-        {"title": "Solution unique", "equation1_str": "2*x + y = 5", "equation2_str": "x - y = 1"},
-        {"title": "Aucune solution", "equation1_str": "2*x + y = 5", "equation2_str": "2*x + y = 3"},
-        {"title": "Infinité de solutions", "equation1_str": "2*x + y = 5", "equation2_str": "4*x + 2*y = 10"},
+        {"title": "Solution unique (2 inconnues)", "equations": ["2*x + y = 5", "x - y = 1"]},
+        {"title": "Aucune solution", "equations": ["2*x + y = 5", "2*x + y = 3"]},
+        {"title": "Infinité de solutions", "equations": ["2*x + y = 5", "4*x + 2*y = 10"]},
+        {"title": "3 inconnues (x, y, z)", "equations": ["x + y + z = 6", "2*x - y + z = 3", "x - y - z = -4"]},
     ]
     for e in raw:
-        e["display1"] = to_display(e["equation1_str"])
-        e["display2"] = to_display(e["equation2_str"])
+        e["displays"] = [to_display(eq) for eq in e["equations"]]
+    return raw
+
+
+@app.get("/api/integral-examples")
+def integral_examples():
+    raw = [
+        {"title": "Primitive d'un polynôme", "function_str": "x**2 + 3*x", "a_str": "", "b_str": ""},
+        {"title": "Primitive avec exp/log", "function_str": "exp(x) + 1/x", "a_str": "", "b_str": ""},
+        {"title": "Aire sous x² sur [0, 3]", "function_str": "x**2", "a_str": "0", "b_str": "3"},
+        {"title": "Aire avec sinus sur [0, π]", "function_str": "sin(x)", "a_str": "0", "b_str": "pi"},
+    ]
+    for e in raw:
+        e["display"] = to_display(e["function_str"])
     return raw
 
 
