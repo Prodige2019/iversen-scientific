@@ -35,6 +35,7 @@ jobs:
         with:
           name: IversenScientific-windows-installer
           path: iversen_engine/installer_output/IversenScientific-Setup.exe
+          retention-days: 1
 
   macos-dmg:
     runs-on: macos-latest
@@ -56,6 +57,7 @@ jobs:
         with:
           name: IversenScientific-macos-dmg
           path: iversen_engine/dist/IversenScientific
+          retention-days: 1
 
   android-apk:
     runs-on: ubuntu-latest
@@ -87,3 +89,4 @@ jobs:
         with:
           name: IversenScientific-android-apk
           path: iversen_mobile/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 1
