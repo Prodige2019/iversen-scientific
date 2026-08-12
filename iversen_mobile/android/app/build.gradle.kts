@@ -31,12 +31,15 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
-            // IMPORTANT : Chaquopy accede aux classes Java (ex: ML Kit) via
-            // reflexion depuis Python — R8 ne peut pas le voir et supprime
-            // ces classes en pensant qu'elles sont inutilisees, causant
-            // "ModuleNotFoundError: No module named 'com'" au lancement.
-            // Pratique standard recommandee pour tout projet Chaquopy.
+            // Chaquopy accede aux classes Java (ex: ML Kit) via reflexion
+            // depuis Python — R8 ne peut pas le voir et supprimerait ces
+            // classes en les croyant inutilisees. On desactive donc la
+            // minification ET la reduction des ressources (le plugin
+            // Flutter active cette derniere par defaut pour les builds
+            // release, ce qui exige minifyEnabled=true — d'ou le conflit
+            // sans cette ligne).
             isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }
