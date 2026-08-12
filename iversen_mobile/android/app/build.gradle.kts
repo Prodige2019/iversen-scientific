@@ -31,6 +31,12 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            // IMPORTANT : Chaquopy accede aux classes Java (ex: ML Kit) via
+            // reflexion depuis Python — R8 ne peut pas le voir et supprime
+            // ces classes en pensant qu'elles sont inutilisees, causant
+            // "ModuleNotFoundError: No module named 'com'" au lancement.
+            // Pratique standard recommandee pour tout projet Chaquopy.
+            isMinifyEnabled = false
         }
     }
 }
@@ -63,8 +69,6 @@ kotlin {
 }
 
 dependencies {
-    // Google ML Kit Text Recognition — OCR natif Android, 100% hors ligne,
-    // appelé directement depuis Python via le pont Chaquopy (voir ocr/reader.py).
     implementation("com.google.mlkit:text-recognition:16.0.1")
 }
 
