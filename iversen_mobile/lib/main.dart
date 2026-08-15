@@ -1,5 +1,9 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 void main() {
   runApp(const MyApp());
@@ -35,9 +39,25 @@ class _IversenWebViewState extends State<IversenWebView> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      // Le serveur Python (démarré dans MainActivity.kt) écoute sur ce
-      // port en local sur le téléphone lui-même — jamais sur internet.
       ..loadRequest(Uri.parse('http://127.0.0.1:8000'));
+
+    // webview_flutter ne gere pas nativement <input type="file"> sur
+    // Android (limitation connue du plugin, confirmee par plusieurs
+    // rapports de bugs officiels flutter/flutter) : sans ce branchement,
+    // cliquer sur le bouton photo ne fait strictement rien. On ouvre
+    // directement l'appareil photo via image_picker des qu'un champ
+    // fichier est declenche cote WebView.
+    if (Platform.isAndroid) {
+      final androidController = _controller.platform as AndroidWebViewController;
+      androidController.setOnShowFileSelector(_onShowFileSelector);
+    }
+  }
+
+  Future<List<String>> _onShowFileSelector(FileSelectorParams params) async {
+    final picker = ImagePicker();
+    final photo = await picker.pickImage(source: ImageSource.camera);
+    if (photo == null) return [];
+    return ['file://${photo.path}'];
   }
 
   @override
