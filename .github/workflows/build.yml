@@ -6,25 +6,10 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 jobs:
-  cleanup-old-artifacts:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Supprimer tous les artefacts précédents
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/actions/artifacts --paginate -q '.artifacts[].id' | \
-          while read -r id; do
-            echo "Suppression de l'artefact $id"
-            gh api repos/${{ github.repository }}/actions/artifacts/$id -X DELETE || true
-          done
-
   windows-exe:
-    needs: cleanup-old-artifacts
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,14 +34,17 @@ jobs:
           mkdir installer_output
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
+      - name: Zipper l'installateur
+        working-directory: iversen_engine/installer_output
+        run: Compress-Archive -Path IversenScientific-Setup.exe -DestinationPath IversenScientific-windows-installer.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: IversenScientific-windows-installer
-          path: iversen_engine/installer_output/IversenScientific-Setup.exe
+          path: iversen_engine/installer_output/IversenScientific-windows-installer.zip
           retention-days: 1
 
   macos-dmg:
-    needs: cleanup-old-artifacts
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -72,14 +60,17 @@ jobs:
           pip install pyinstaller
           pyinstaller --onedir --windowed --name IversenScientific --icon icon.ico --add-data "frontend:frontend" run_desktop.py
 
+      - name: Zipper l'application
+        working-directory: iversen_engine/dist
+        run: zip -r IversenScientific-macos-dmg.zip IversenScientific
+
       - uses: actions/upload-artifact@v4
         with:
           name: IversenScientific-macos-dmg
-          path: iversen_engine/dist/IversenScientific
+          path: iversen_engine/dist/IversenScientific-macos-dmg.zip
           retention-days: 1
 
   android-apk:
-    needs: cleanup-old-artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,3 +101,25 @@ jobs:
           name: IversenScientific-android-apk
           path: iversen_mobile/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 1
+
+  create-release:
+    needs: [windows-exe, macos-dmg, android-apk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Créer la Release GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Iversen Scientific — build ${{ github.run_number }}"
+          files: |
+            downloaded/IversenScientific-windows-installer/IversenScientific-windows-installer.zip
+            downloaded/IversenScientific-macos-dmg/IversenScientific-macos-dmg.zip
+            downloaded/IversenScientific-android-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
