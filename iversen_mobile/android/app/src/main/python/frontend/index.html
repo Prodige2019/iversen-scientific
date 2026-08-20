@@ -157,6 +157,11 @@
     </div>
   </header>
 
+  <div id="updateBanner" style="display:none; align-items:center; justify-content:space-between; gap:12px; background:var(--gold-soft); border:1px solid var(--badge-border); border-radius:10px; padding:10px 16px; margin-bottom:16px; font-size:13px;">
+    <span id="updateBannerText"></span>
+    <a id="updateBannerLink" href="#" target="_blank" class="btn btn-primary" style="font-size:12px; padding:6px 14px; text-decoration:none;">Télécharger</a>
+  </div>
+
   <div class="tab-groups">
     <div class="tab-group">
       <div class="tab-group-label">Mathématiques</div>
@@ -695,6 +700,39 @@ function submitOcrText(){
   document.getElementById('ocrReview').style.display = 'none';
   switchTab('function');
   runCorrection();
+}
+
+// Version actuelle de l'appli — a incrementer manuellement a chaque
+// changement notable, en parallele du tag de Release GitHub correspondant.
+const CURRENT_VERSION = "1.0.0";
+const GITHUB_REPO = "Prodige2019/iversen-scientific";
+
+function isVersionNewer(latest, current){
+  const a = latest.split(".").map(Number);
+  const b = current.split(".").map(Number);
+  for(let i = 0; i < Math.max(a.length, b.length); i++){
+    const x = a[i] || 0, y = b[i] || 0;
+    if(x > y) return true;
+    if(x < y) return false;
+  }
+  return false; // strictement egales
+}
+
+async function checkForUpdate(){
+  try{
+    const r = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+    if(!r.ok) return; // pas de release publiee, ou depot prive (API GitHub inaccessible sans jeton) : on se tait
+    const data = await r.json();
+    const latestTag = (data.tag_name || "").replace(/^v/, "");
+    if(!latestTag || !isVersionNewer(latestTag, CURRENT_VERSION)) return;
+
+    const banner = document.getElementById('updateBanner');
+    const text = document.getElementById('updateBannerText');
+    const link = document.getElementById('updateBannerLink');
+    text.textContent = `Nouvelle version disponible : ${latestTag} (tu utilises ${CURRENT_VERSION}).`;
+    link.href = data.html_url || `https://github.com/${GITHUB_REPO}/releases/latest`;
+    banner.style.display = 'flex';
+  }catch(e){ /* verification de mise a jour : silencieuse en cas d'echec (hors ligne, etc.) */ }
 }
 
 async function checkHealth(){
@@ -1866,6 +1904,7 @@ async function runThermo(){
 }
 
 checkHealth();
+checkForUpdate();
 loadExamples();
 loadEquationExamples();
 loadInequalityExamples();
