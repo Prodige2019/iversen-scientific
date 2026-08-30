@@ -8,15 +8,7 @@ import sympy as sp
 from sympy import latex
 from .inequalities import InequalityAnalysis, x
 from .models import Correction, Step
-
-
-def _set_to_latex(s: sp.Set) -> str:
-    """Représentation LaTeX lisible d'un ensemble solution (union d'intervalles)."""
-    if s == sp.S.EmptySet:
-        return "\\varnothing"
-    if s == sp.S.Reals:
-        return "\\mathbb{R}"
-    return latex(s)
+from .set_notation import french_set_latex as _set_to_latex
 
 
 def write_inequality_correction(exercise_title: str, inequality_str: str, analysis: InequalityAnalysis) -> Correction:

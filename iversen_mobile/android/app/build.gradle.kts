@@ -48,7 +48,16 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.11"
-        buildPython(System.getenv("CHAQUOPY_BUILD_PYTHON") ?: "C:/Users/brice/AppData/Local/Programs/Python/Python311/python.exe")
+        // Uniquement utilisé au moment du build (sur la machine du
+        // développeur) pour résoudre/télécharger les paquets pip listés
+        // ci-dessous — jamais embarqué dans l'app. Valeur précédente : un
+        // chemin Windows absolu propre à un seul poste de développement
+        // ("C:/Users/brice/..."), ce qui cassait le build sur toute autre
+        // machine (autre développeur, autre OS, CI...). On se rabat
+        // maintenant sur "python3.11" résolu via le PATH, avec la variable
+        // d'environnement CHAQUOPY_BUILD_PYTHON en échappatoire explicite si
+        // un poste a besoin d'un chemin précis.
+        buildPython(System.getenv("CHAQUOPY_BUILD_PYTHON") ?: "python3.11")
         pip {
             install("fastapi")
             install("uvicorn")

@@ -430,7 +430,10 @@
     <div class="input-card">
       <span style="font-size:13px; color:var(--ink-soft);">Photo d'un exercice — le texte lu te sera présenté pour confirmation avant toute correction.</span>
     </div>
-    <div class="input-card">
+    <div class="input-card" id="ocrUnavailableNotice" style="display:none; background:var(--surface-soft); border:1px solid var(--red);">
+      <span style="font-size:13px; color:var(--red);">📷 La lecture de photo n'est pas disponible dans cette version de l'app (build mobile) — saisis directement l'expression dans l'onglet « Fonction ».</span>
+    </div>
+    <div class="input-card" id="ocrButtons">
       <label class="btn btn-ghost" style="cursor:pointer;">
         📷 Photo recadrée sur une ligne
         <input type="file" id="photoInput" accept="image/*" style="display:none" onchange="handlePhoto(event)">
@@ -742,6 +745,18 @@ async function checkHealth(){
     const d = await r.json();
     el.textContent = "Moteur SymPy actif · aucun LLM";
     el.classList.remove('off');
+    // Sur certains builds (ex: mobile Android/Chaquopy), l'OCR n'est pas
+    // embarqué (Tesseract nécessite un exécutable natif que le bac à sable
+    // Android ne permet pas d'appeler) — on le signale clairement plutôt que
+    // de laisser l'utilisateur découvrir l'échec au moment de prendre une
+    // photo. Voir ocr/reader.py (OCR_AVAILABLE) côté backend.
+    const notice = document.getElementById('ocrUnavailableNotice');
+    const buttons = document.getElementById('ocrButtons');
+    if(notice && buttons){
+      const available = !!d.ocr;
+      notice.style.display = available ? 'none' : 'flex';
+      buttons.style.display = available ? 'flex' : 'none';
+    }
   }catch(e){
     el.textContent = "Backend indisponible — lance `uvicorn app:app --reload`";
     el.classList.add('off');
@@ -1556,7 +1571,13 @@ async function runMatrix(){
 }
 
 function _parsePointInput(text){
-  return text.trim().split(",").map(c => Number(c.trim()));
+  // On envoie les coordonnées telles quelles (chaînes), sans les convertir en
+  // Number() côté JS : Number("1/2") vaut NaN et Number("sqrt(2)") aussi, ce
+  // qui empêchait de saisir une fraction ou une racine comme coordonnée (et
+  // provoquait même un crash côté serveur une fois converti en JSON). Le
+  // moteur symbolique côté backend sait déjà interpréter "1/2", "sqrt(2)",
+  // "pi", etc. — c'est donc à lui de faire ce travail, pas au frontend.
+  return text.trim().split(",").map(c => c.trim());
 }
 
 async function loadGeometryExamples(){

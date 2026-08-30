@@ -11,6 +11,7 @@ import sympy as sp
 from sympy import latex
 from .functions import FunctionAnalysis, x
 from .models import Correction, Step
+from .set_notation import french_set_latex
 
 
 def _fmt(expr: sp.Expr) -> str:
@@ -31,7 +32,7 @@ def write_correction(exercise_title: str, function_str: str, analysis: FunctionA
     # Étape 1 — domaine de définition
     correction.add(Step(
         title="Ensemble de définition",
-        result_latex=f"D_f = {latex(analysis.domain)}",
+        result_latex=f"D_f = {french_set_latex(analysis.domain)}",
         explanation=(
             "On détermine les valeurs de x pour lesquelles l'expression de f est calculable "
             "(pas de division par zéro, pas de racine d'un nombre négatif, pas de logarithme "
@@ -76,7 +77,7 @@ def write_correction(exercise_title: str, function_str: str, analysis: FunctionA
     # Étape 4 — signe de la dérivée / variations
     if analysis.sign_intervals:
         sign_desc = "  ·  ".join(
-            f"{sp.pretty(interval)} : f' {sign} 0" for interval, sign in analysis.sign_intervals
+            f"{french_set_latex(interval)} : f' {sign} 0" for interval, sign in analysis.sign_intervals
         )
     else:
         sign_desc = "\\text{signe non déterminé automatiquement sur ce domaine}"

@@ -34,13 +34,29 @@ class GeometryAnalysis:
     are_orthogonal: Optional[bool] = None
 
 
+def _parse_coordinate(value) -> sp.Expr:
+    """Convertit une coordonnée en nombre SymPy exact. Accepte aussi bien un
+    nombre déjà converti (int/float — cas du frontend, ou d'un appel API direct)
+    qu'une chaîne à interpréter symboliquement (fractions "1/2", racines
+    "sqrt(2)", "pi"...). Le frontend envoyait auparavant systématiquement un
+    nombre JS déjà converti, ce qui provoquait une AttributeError non gérée
+    dès qu'un point était saisi (l'analyse attendait une chaîne) : la
+    géométrie était donc inutilisable depuis l'interface. Accepter les deux
+    formes ici corrige ce crash, quelle que soit l'origine de l'appel."""
+    if isinstance(value, bool):
+        raise TypeError(f"Coordonnée invalide : {value!r}")
+    if isinstance(value, (int, float)):
+        return sp.nsimplify(value)
+    return sp.nsimplify(parse_math_expression(str(value).strip()))
+
+
 def _parse_point(coords, label: str) -> Point:
     if not isinstance(coords, (list, tuple)) or len(coords) != 2:
         raise ValueError(f"Le point {label} doit avoir exactement 2 coordonnées (x, y).")
     try:
-        x = sp.nsimplify(parse_math_expression(coords[0]))
-        y = sp.nsimplify(parse_math_expression(coords[1]))
-    except (sp.SympifyError, TypeError) as e:
+        x = _parse_coordinate(coords[0])
+        y = _parse_coordinate(coords[1])
+    except (sp.SympifyError, TypeError, ValueError) as e:
         raise ValueError(f"Coordonnées du point {label} illisibles : {coords}. Détail : {e}")
     return (x, y)
 

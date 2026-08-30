@@ -14,14 +14,59 @@ synthétiques dégradées (grille bleue, éclairage inégal, légère rotation, 
 en isolant chaque facteur de dégradation séparément, l'éclairage inégal s'est révélé
 être, de loin, le facteur qui casse le plus l'OCR — d'où l'usage d'un seuillage
 ADAPTATIF (qui s'ajuste localement) plutôt qu'un seuil global fixe.
+
+Disponibilité — IMPORTANT (build Android/Chaquopy) : ce module dépend d'OpenCV
+(cv2) et de pytesseract, qui a lui-même besoin d'un EXÉCUTABLE natif `tesseract`
+installé sur la machine. Ni l'un ni l'autre ne fait partie de la liste
+`pip { install(...) }` du build Chaquopy (android/app/build.gradle.kts) — et de
+toute façon, `tesseract` en tant que binaire externe appelé en sous-processus
+n'est pas quelque chose qu'une app Android sandboxée peut exécuter (voir
+android/app/src/main/python/ocr/README.md pour la piste retenue : Google
+ML Kit, dont la dépendance Gradle existe déjà mais dont le pont Python↔Java
+reste à écrire). cv2/pytesseract étaient donc importés sans filet ici, ce qui
+faisait planter l'import de ce module — et donc de tout app.py, qui l'importe
+en tête de fichier — au tout premier lancement sur Android : pas seulement
+l'OCR qui ne marchait pas, c'est TOUTE l'application qui ne démarrait pas.
+On importe donc maintenant ces deux dépendances de façon défensive : le reste
+de l'application (fonctions, équations, géométrie, etc., qui n'ont rien à voir
+avec l'OCR) continue de fonctionner normalement même si cv2/pytesseract sont
+absents ; seules les fonctions OCR elles-mêmes lèvent alors une erreur claire
+et récupérable (OcrUnavailableError), au lieu d'empêcher tout le reste de
+tourner.
 """
 from pathlib import Path
 from typing import Union, List, Dict
 
 import numpy as np
-import cv2
 from PIL import Image
-import pytesseract
+
+try:
+    import cv2
+    import pytesseract
+    OCR_AVAILABLE = True
+    _IMPORT_ERROR: Exception | None = None
+except ImportError as _e:  # pragma: no cover - exercé uniquement quand cv2/pytesseract manquent
+    cv2 = None  # type: ignore[assignment]
+    pytesseract = None  # type: ignore[assignment]
+    OCR_AVAILABLE = False
+    _IMPORT_ERROR = _e
+
+
+class OcrUnavailableError(RuntimeError):
+    """La lecture OCR n'est pas disponible sur cette plateforme/ce build (ex:
+    build Android où cv2/pytesseract ne sont pas embarqués). Distincte d'une
+    erreur de lecture d'image : ici, ce n'est pas la photo qui pose problème,
+    c'est la fonctionnalité elle-même qui est absente de ce build."""
+
+
+def _require_ocr() -> None:
+    if not OCR_AVAILABLE:
+        raise OcrUnavailableError(
+            "La lecture OCR n'est pas disponible dans ce build (dépendances "
+            f"cv2/pytesseract absentes : {_IMPORT_ERROR}). Sur mobile, saisissez "
+            "l'expression directement au clavier en attendant l'intégration "
+            "d'un OCR natif (voir ocr/README.md)."
+        )
 
 
 def _remove_grid_lines(rgb: np.ndarray) -> np.ndarray:
@@ -82,6 +127,7 @@ def extract_text(image_path: Union[str, Path], single_line: bool = True) -> str:
     """Extrait le texte brut d'une image. `single_line=True` optimise pour un
     énoncé tenant sur une ligne (le cas d'usage principal de cette Phase 2) ;
     passer False pour un bloc de texte multi-lignes (énoncé complet)."""
+    _require_ocr()
     image = Image.open(image_path)
     processed = _preprocess(image)
     psm = 7 if single_line else 6  # 7 = ligne unique, 6 = bloc uniforme
@@ -119,6 +165,7 @@ def extract_line_candidates(image_path: Union[str, Path], max_candidates: int = 
     classe par vraisemblance d'être une expression mathématique. Ne choisit
     JAMAIS automatiquement à la place de l'utilisateur — renvoie les meilleurs
     candidats pour confirmation, comme le reste du pipeline OCR de ce projet."""
+    _require_ocr()
     image = Image.open(image_path)
     processed = _preprocess(image)
     data = pytesseract.image_to_data(processed, config="--psm 6", output_type=pytesseract.Output.DICT)

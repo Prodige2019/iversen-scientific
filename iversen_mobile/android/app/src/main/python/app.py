@@ -9,6 +9,9 @@ Lancer :
 Puis ouvrir frontend/index.html dans un navigateur (il appelle localhost:8000).
 """
 import concurrent.futures
+import multiprocessing as mp
+import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -38,7 +41,7 @@ from engine import (
     analyze_sensible_heat, analyze_latent_heat, write_thermodynamics_correction,
     analyze_integral, write_integral_correction,
 )
-from ocr import extract_text, clean_text, to_canonical_expression, OcrParseError
+from ocr import extract_text, clean_text, to_canonical_expression, OcrParseError, OcrUnavailableError, OCR_AVAILABLE
 from ocr.reader import extract_line_candidates
 from export_engine import export_correction_to_pdf, export_correction_to_docx
 from plot_engine import plot_function_analysis_bytes, plot_function_analysis_data
@@ -64,11 +67,33 @@ def to_display(expr_str: str) -> str:
 
 app = FastAPI(title="Iversen Scientific — Moteur de correction (Phase 1 + OCR)")
 
-# CORS ouvert : usage local de développement uniquement.
-# À restreindre à l'origine réelle de l'app avant toute mise en production.
+# CORS : le frontend web ET la version bureau sont servis en same-origin par
+# cette même API FastAPI (voir frontend/index.html : `const API = ""`, et
+# run_desktop.py qui ouvre http://127.0.0.1:8000) — CORS n'est donc pas requis
+# pour l'usage normal (le navigateur n'applique pas cette restriction pour des
+# requêtes same-origin). L'app mobile Flutter n'est pas non plus concernée : un
+# client HTTP natif n'envoie pas d'en-tête Origin, CORS ne s'y applique pas.
+#
+# `allow_origins=["*"]` restait donc une ouverture inutile — et concrètement
+# dangereuse une fois l'app installée en local : n'importe quel site visité
+# dans le navigateur de l'utilisateur pouvait, pendant que le serveur local
+# tourne, interroger http://127.0.0.1:8000/api/... en arrière-plan (ex: lire
+# tout l'historique d'exercices) puisque le serveur répondait "oui" à
+# n'importe quelle origine. On restreint donc par défaut aux origines locales
+# légitimes, avec une échappatoire par variable d'environnement pour un
+# déploiement hébergé avec un frontend sur un domaine séparé.
+_default_cors_origins = [
+    "http://127.0.0.1:8000", "http://localhost:8000",
+    "http://127.0.0.1:5173", "http://localhost:5173",  # ports de dev usuels
+]
+_env_cors_origins = os.environ.get("IVERSEN_CORS_ORIGINS", "").strip()
+_cors_origins = (
+    [o.strip() for o in _env_cors_origins.split(",") if o.strip()]
+    if _env_cors_origins else _default_cors_origins
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -77,8 +102,113 @@ app.add_middleware(
 # pathologiques pourraient en théorie rendre un sous-calcul SymPy très lent.
 # On borne chaque requête dans le temps par défense en profondeur, en plus des
 # garde-fous déjà en place dans engine/functions.py (voir _domain_pieces).
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 REQUEST_TIMEOUT_SECONDS = 10
+
+# IMPORTANT — pourquoi un processus dédié par requête, et pas un ThreadPoolExecutor :
+#
+# La version précédente soumettait chaque calcul à un ThreadPoolExecutor partagé
+# (4 workers) et abandonnait juste l'attente avec future.result(timeout=...) en
+# cas de dépassement. Mais annuler l'ATTENTE ne stoppe pas le THREAD : un calcul
+# SymPy resté bloqué (équation pathologique, racines symboliques très lourdes...)
+# continuait de tourner indéfiniment en arrière-plan, en tenant occupé un des 4
+# emplacements du pool pour de bon. À l'usage, ces threads « zombies »
+# s'accumulaient et finissaient par épuiser tout le pool — si bien que des
+# requêtes ensuite parfaitement anodines et rapides (ex: tracer la courbe de
+# (x³-1)/(x+2), qui se calcule en réalité en moins d'une seconde) se
+# retrouvaient à attendre un emplacement libre... et expiraient elles aussi,
+# avec le même message trompeur « trop complexe ». De plus, le GIL de Python
+# fait qu'un calcul SymPy (pur Python, CPU-bound) dans un thread peut ralentir
+# tous les autres threads du même processus pendant qu'il tourne.
+#
+# On isole donc chaque requête dans son propre processus système : si elle
+# dépasse le délai, on la termine réellement (terminate/kill), ce qui libère
+# la mémoire ET le CPU immédiatement, sans jamais pouvoir affamer les requêtes
+# suivantes. C'est aussi une isolation plus sûre : un crash bas niveau d'une
+# dépendance (matplotlib, tesseract...) sur une entrée pathologique ne peut
+# pas faire tomber tout le serveur, juste ce process-là.
+#
+# "forkserver" plutôt que "fork" : uvicorn/Starlette exécutent les endpoints
+# synchrones dans un pool de threads. Appeler fork() depuis un processus déjà
+# multi-thread est une source connue de deadlocks (un verrou détenu par un
+# autre thread au moment du fork reste bloqué pour toujours dans l'enfant, qui
+# n'a hérité que du thread appelant). "forkserver" évite ce piège : un
+# processus auxiliaire dédié, lancé au démarrage AVANT que d'autres threads
+# n'existent, se charge de dupliquer les workers à la demande. C'est pour ça
+# que chaque tâche est désormais une fonction nommée au niveau du module
+# (ci-dessous, _task_*) plutôt qu'une closure : forkserver (comme spawn, son
+# repli sur Windows) a besoin de pouvoir sérialiser la cible par référence.
+_MP_START_METHOD = (
+    "forkserver" if "forkserver" in mp.get_all_start_methods()
+    else "spawn" if "spawn" in mp.get_all_start_methods()
+    else None
+)
+# Cas particulier : ce même fichier tourne aussi embarqué sur Android via
+# Chaquopy (voir iversen_mobile/android/app/src/main/python/), où le moteur
+# Python est intégré dans le processus applicatif unique de l'app — il n'y a
+# ni fork() ni possibilité de lancer un second interpréteur Python (sandbox
+# Android). `multiprocessing` peut y sembler disponible côté API sans
+# fonctionner réellement à l'exécution (blocage silencieux, crash natif...).
+# On désactive donc explicitement l'isolation par processus sur Android et on
+# se rabat sur le mode thread ci-dessous — moins strict sur les blocages,
+# mais sans risque de casser l'app, et acceptable ici car un téléphone n'a
+# qu'un seul utilisateur à la fois (pas de scénario d'épuisement d'un pool
+# partagé entre plusieurs utilisateurs concurrents comme sur un serveur).
+_IS_ANDROID = any(k in os.environ for k in ("ANDROID_ARGUMENT", "ANDROID_ROOT", "ANDROID_DATA"))
+if _IS_ANDROID:
+    _MP_START_METHOD = None
+_MP_CTX = mp.get_context(_MP_START_METHOD) if _MP_START_METHOD else None
+
+
+def _isolated_worker(target, args, kwargs, result_queue) -> None:
+    try:
+        result_queue.put(("ok", target(*args, **kwargs)))
+    except Exception as e:  # noqa: BLE001 — on relaie l'erreur telle quelle au process parent
+        result_queue.put(("error", e))
+
+
+def run_isolated(target, *args, timeout: float = REQUEST_TIMEOUT_SECONDS, **kwargs):
+    """Exécute target(*args, **kwargs) avec une vraie coupure au bout de `timeout`
+    secondes (voir la note ci-dessus). Lève concurrent.futures.TimeoutError si le
+    délai est dépassé, pour rester compatible avec le code d'erreur existant des
+    endpoints (HTTP 422, message « trop complexe »)."""
+    if _MP_CTX is None:
+        # Repli (Android/Chaquopy, ou plateformes sans fork/spawn) : pas de
+        # coupure forcée possible sans un vrai processus à tuer, mais on isole
+        # au moins chaque appel dans son propre exécuteur à usage unique
+        # plutôt que de partager un pool fixe où les threads bloqués
+        # s'accumulent. Important : shutdown(wait=False) et non un simple
+        # `with` — un `with` attendrait la fin du thread avant de laisser
+        # remonter le TimeoutError, ce qui annulerait justement la coupure.
+        one_shot = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = one_shot.submit(target, *args, **kwargs)
+        try:
+            return future.result(timeout=timeout)
+        finally:
+            one_shot.shutdown(wait=False)
+
+    result_queue = _MP_CTX.Queue()
+    proc = _MP_CTX.Process(target=_isolated_worker, args=(target, args, kwargs, result_queue))
+    proc.start()
+    proc.join(timeout)
+
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(2)
+        if proc.is_alive():
+            proc.kill()
+            proc.join()
+        raise concurrent.futures.TimeoutError()
+
+    if not result_queue.empty():
+        status, payload = result_queue.get()
+        if status == "error":
+            raise payload
+        return payload
+
+    # Le process s'est terminé sans rien renvoyer (crash bas niveau imprévu,
+    # ex. segfault d'une dépendance native) : on le signale explicitement
+    # plutôt que de laisser l'appelant deviner pourquoi il n'y a pas de résultat.
+    raise RuntimeError("Le calcul a échoué de manière inattendue (processus interrompu).")
 
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 Mo, suffisant pour une photo de cahier compressée
 
@@ -194,18 +324,21 @@ class ThermodynamicsRequest(BaseModel):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "engine": "sympy", "llm_used": False, "ocr": "tesseract"}
+    return {
+        "status": "ok", "engine": "sympy", "llm_used": False,
+        "ocr": "tesseract" if OCR_AVAILABLE else None,
+    }
+
+
+def _task_correct(req: CorrectionRequest):
+    analysis = analyze(req.function_str)
+    return write_correction(req.exercise_title, req.function_str, analysis)
 
 
 @app.post("/api/correct")
 def correct(req: CorrectionRequest):
-    def _run():
-        analysis = analyze(req.function_str)
-        return write_correction(req.exercise_title, req.function_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_correct, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -216,15 +349,15 @@ def correct(req: CorrectionRequest):
     return correction_to_dict(correction)
 
 
+def _task_solve_equation_endpoint(req: EquationRequest):
+    analysis = solve_equation(req.equation_str)
+    return write_equation_correction(req.exercise_title, req.equation_str, analysis)
+
+
 @app.post("/api/solve-equation")
 def solve_equation_endpoint(req: EquationRequest):
-    def _run():
-        analysis = solve_equation(req.equation_str)
-        return write_equation_correction(req.exercise_title, req.equation_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_solve_equation_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -235,15 +368,15 @@ def solve_equation_endpoint(req: EquationRequest):
     return correction_to_dict(correction)
 
 
+def _task_solve_inequality_endpoint(req: InequalityRequest):
+    analysis = solve_inequality(req.inequality_str)
+    return write_inequality_correction(req.exercise_title, req.inequality_str, analysis)
+
+
 @app.post("/api/solve-inequality")
 def solve_inequality_endpoint(req: InequalityRequest):
-    def _run():
-        analysis = solve_inequality(req.inequality_str)
-        return write_inequality_correction(req.exercise_title, req.inequality_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_solve_inequality_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -254,15 +387,15 @@ def solve_inequality_endpoint(req: InequalityRequest):
     return correction_to_dict(correction)
 
 
+def _task_solve_system_endpoint(req: SystemRequest):
+    analysis = solve_system(req.equations)
+    return write_system_correction(req.exercise_title, req.equations, analysis)
+
+
 @app.post("/api/solve-system")
 def solve_system_endpoint(req: SystemRequest):
-    def _run():
-        analysis = solve_system(req.equations)
-        return write_system_correction(req.exercise_title, req.equations, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_solve_system_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -273,15 +406,15 @@ def solve_system_endpoint(req: SystemRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_integral_endpoint(req: IntegralRequest):
+    analysis = analyze_integral(req.function_str, req.a_str, req.b_str)
+    return write_integral_correction(req.exercise_title, req.function_str, analysis)
+
+
 @app.post("/api/analyze-integral")
 def analyze_integral_endpoint(req: IntegralRequest):
-    def _run():
-        analysis = analyze_integral(req.function_str, req.a_str, req.b_str)
-        return write_integral_correction(req.exercise_title, req.function_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_integral_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -292,15 +425,15 @@ def analyze_integral_endpoint(req: IntegralRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_sequence_endpoint(req: SequenceRequest):
+    analysis = analyze_sequence(req.first_term_str, req.recurrence_str, req.start_index)
+    return write_sequence_correction(req.exercise_title, req.first_term_str, req.recurrence_str, analysis)
+
+
 @app.post("/api/analyze-sequence")
 def analyze_sequence_endpoint(req: SequenceRequest):
-    def _run():
-        analysis = analyze_sequence(req.first_term_str, req.recurrence_str, req.start_index)
-        return write_sequence_correction(req.exercise_title, req.first_term_str, req.recurrence_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_sequence_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -311,15 +444,15 @@ def analyze_sequence_endpoint(req: SequenceRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_binomial_endpoint(req: BinomialRequest):
+    analysis = analyze_binomial(req.n, req.p_str, req.k)
+    return write_binomial_correction(req.exercise_title, req.n, req.p_str, req.k, analysis)
+
+
 @app.post("/api/analyze-binomial")
 def analyze_binomial_endpoint(req: BinomialRequest):
-    def _run():
-        analysis = analyze_binomial(req.n, req.p_str, req.k)
-        return write_binomial_correction(req.exercise_title, req.n, req.p_str, req.k, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_binomial_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -328,17 +461,17 @@ def analyze_binomial_endpoint(req: BinomialRequest):
             detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
         )
     return correction_to_dict(correction)
+
+
+def _task_analyze_complex_endpoint(req: ComplexRequest):
+    analysis = analyze_complex(req.z_str)
+    return write_complex_correction(req.exercise_title, req.z_str, analysis)
 
 
 @app.post("/api/analyze-complex")
 def analyze_complex_endpoint(req: ComplexRequest):
-    def _run():
-        analysis = analyze_complex(req.z_str)
-        return write_complex_correction(req.exercise_title, req.z_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_complex_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -347,18 +480,18 @@ def analyze_complex_endpoint(req: ComplexRequest):
             detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
         )
     return correction_to_dict(correction)
+
+
+def _task_analyze_matrix_endpoint(req: MatrixRequest):
+    analysis = analyze_matrix(req.rows)
+    label = "M = " + str(req.rows)
+    return write_matrix_correction(req.exercise_title, label, analysis)
 
 
 @app.post("/api/analyze-matrix")
 def analyze_matrix_endpoint(req: MatrixRequest):
-    def _run():
-        analysis = analyze_matrix(req.rows)
-        label = "M = " + str(req.rows)
-        return write_matrix_correction(req.exercise_title, label, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_matrix_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -369,16 +502,16 @@ def analyze_matrix_endpoint(req: MatrixRequest):
     return correction_to_dict(correction)
 
 
+def _task_matrix_operation_endpoint(req: MatrixOperationRequest):
+    result = compute_matrix_operation(req.rows_a, req.rows_b, req.operation)
+    label = f"{req.operation}({req.rows_a}, {req.rows_b})"
+    return write_matrix_operation_correction(req.exercise_title, label, result)
+
+
 @app.post("/api/matrix-operation")
 def matrix_operation_endpoint(req: MatrixOperationRequest):
-    def _run():
-        result = compute_matrix_operation(req.rows_a, req.rows_b, req.operation)
-        label = f"{req.operation}({req.rows_a}, {req.rows_b})"
-        return write_matrix_operation_correction(req.exercise_title, label, result)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_matrix_operation_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -389,16 +522,16 @@ def matrix_operation_endpoint(req: MatrixOperationRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_geometry_endpoint(req: GeometryRequest):
+    analysis = analyze_geometry(req.A, req.B, req.C)
+    label = f"A={req.A}, B={req.B}" + (f", C={req.C}" if req.C else "")
+    return write_geometry_correction(req.exercise_title, label, analysis)
+
+
 @app.post("/api/analyze-geometry")
 def analyze_geometry_endpoint(req: GeometryRequest):
-    def _run():
-        analysis = analyze_geometry(req.A, req.B, req.C)
-        label = f"A={req.A}, B={req.B}" + (f", C={req.C}" if req.C else "")
-        return write_geometry_correction(req.exercise_title, label, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_geometry_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -409,15 +542,15 @@ def analyze_geometry_endpoint(req: GeometryRequest):
     return correction_to_dict(correction)
 
 
+def _task_balance_equation_endpoint(req: ChemistryRequest):
+    analysis = balance_equation(req.equation_str)
+    return write_chemistry_correction(req.exercise_title, req.equation_str, analysis)
+
+
 @app.post("/api/balance-equation")
 def balance_equation_endpoint(req: ChemistryRequest):
-    def _run():
-        analysis = balance_equation(req.equation_str)
-        return write_chemistry_correction(req.exercise_title, req.equation_str, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_balance_equation_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -428,16 +561,16 @@ def balance_equation_endpoint(req: ChemistryRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_circuit_endpoint(req: CircuitRequest):
+    analysis = analyze_circuit(req.resistances, req.topology, req.voltage)
+    label = f"{req.topology}({req.resistances}, U={req.voltage})"
+    return write_circuit_correction(req.exercise_title, label, analysis)
+
+
 @app.post("/api/analyze-circuit")
 def analyze_circuit_endpoint(req: CircuitRequest):
-    def _run():
-        analysis = analyze_circuit(req.resistances, req.topology, req.voltage)
-        label = f"{req.topology}({req.resistances}, U={req.voltage})"
-        return write_circuit_correction(req.exercise_title, label, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_circuit_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -448,16 +581,16 @@ def analyze_circuit_endpoint(req: CircuitRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_kinematics_endpoint(req: KinematicsRequest):
+    analysis = analyze_kinematics(req.x0, req.v0, req.a, req.t)
+    label = f"x0={req.x0}, v0={req.v0}, a={req.a}, t={req.t}"
+    return write_kinematics_correction(req.exercise_title, label, analysis)
+
+
 @app.post("/api/analyze-kinematics")
 def analyze_kinematics_endpoint(req: KinematicsRequest):
-    def _run():
-        analysis = analyze_kinematics(req.x0, req.v0, req.a, req.t)
-        label = f"x0={req.x0}, v0={req.v0}, a={req.a}, t={req.t}"
-        return write_kinematics_correction(req.exercise_title, label, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_kinematics_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -468,16 +601,16 @@ def analyze_kinematics_endpoint(req: KinematicsRequest):
     return correction_to_dict(correction)
 
 
+def _task_analyze_optics_endpoint(req: OpticsRequest):
+    analysis = analyze_thin_lens(req.f, req.OA)
+    label = f"f'={req.f}, OA={req.OA}"
+    return write_optics_correction(req.exercise_title, label, analysis)
+
+
 @app.post("/api/analyze-optics")
 def analyze_optics_endpoint(req: OpticsRequest):
-    def _run():
-        analysis = analyze_thin_lens(req.f, req.OA)
-        label = f"f'={req.f}, OA={req.OA}"
-        return write_optics_correction(req.exercise_title, label, analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_optics_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -486,19 +619,19 @@ def analyze_optics_endpoint(req: OpticsRequest):
             detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
         )
     return correction_to_dict(correction)
+
+
+def _task_analyze_stoichiometry_endpoint(req: StoichiometryRequest):
+    analysis = analyze_stoichiometry(req.equation_str, req.known_compound, req.amount, req.amount_type)
+    return write_stoichiometry_correction(
+        req.exercise_title, req.equation_str, req.known_compound, req.amount, req.amount_type, analysis
+    )
 
 
 @app.post("/api/analyze-stoichiometry")
 def analyze_stoichiometry_endpoint(req: StoichiometryRequest):
-    def _run():
-        analysis = analyze_stoichiometry(req.equation_str, req.known_compound, req.amount, req.amount_type)
-        return write_stoichiometry_correction(
-            req.exercise_title, req.equation_str, req.known_compound, req.amount, req.amount_type, analysis
-        )
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_stoichiometry_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -507,26 +640,26 @@ def analyze_stoichiometry_endpoint(req: StoichiometryRequest):
             detail="Ce calcul est trop complexe pour être résolu automatiquement dans le temps imparti.",
         )
     return correction_to_dict(correction)
+
+
+def _task_analyze_thermodynamics_endpoint(req: ThermodynamicsRequest):
+    if req.mode == "sensible":
+        if not all([req.specific_heat, req.t_initial, req.t_final]):
+            raise ValueError("Le mode « sensible » requiert specific_heat, t_initial et t_final.")
+        analysis = analyze_sensible_heat(req.mass, req.specific_heat, req.t_initial, req.t_final)
+    elif req.mode == "latente":
+        if not req.latent_heat:
+            raise ValueError("Le mode « latente » requiert latent_heat.")
+        analysis = analyze_latent_heat(req.mass, req.latent_heat)
+    else:
+        raise ValueError(f"Mode inconnu : « {req.mode} » (attendu : « sensible » ou « latente »).")
+    return write_thermodynamics_correction(req.exercise_title, f"{req.mode}({req.mass})", analysis)
 
 
 @app.post("/api/analyze-thermodynamics")
 def analyze_thermodynamics_endpoint(req: ThermodynamicsRequest):
-    def _run():
-        if req.mode == "sensible":
-            if not all([req.specific_heat, req.t_initial, req.t_final]):
-                raise ValueError("Le mode « sensible » requiert specific_heat, t_initial et t_final.")
-            analysis = analyze_sensible_heat(req.mass, req.specific_heat, req.t_initial, req.t_final)
-        elif req.mode == "latente":
-            if not req.latent_heat:
-                raise ValueError("Le mode « latente » requiert latent_heat.")
-            analysis = analyze_latent_heat(req.mass, req.latent_heat)
-        else:
-            raise ValueError(f"Mode inconnu : « {req.mode} » (attendu : « sensible » ou « latente »).")
-        return write_thermodynamics_correction(req.exercise_title, f"{req.mode}({req.mass})", analysis)
-
     try:
-        future = _executor.submit(_run)
-        correction = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        correction = run_isolated(_task_analyze_thermodynamics_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -537,28 +670,28 @@ def analyze_thermodynamics_endpoint(req: ThermodynamicsRequest):
     return correction_to_dict(correction)
 
 
-@app.post("/api/ocr")
-async def ocr(image: UploadFile = File(...)):
-    """Extrait le texte d'une photo/scan d'énoncé. Renvoie TOUJOURS le texte brut ET
-    une proposition d'expression nettoyée pour confirmation/édition par l'utilisateur
-    côté frontend — jamais envoyé directement au moteur de correction sans validation.
-
-    Limite honnête (voir README) : Tesseract est un OCR généraliste, pas spécialisé
-    maths. Le caractère « ^ » (exposant) est fréquemment mal lu (confondu avec « * »)
-    sur du texte imprimé compact. Une photo nette, texte imprimé sur une seule ligne,
-    fonctionne raisonnablement ; l'écriture manuscrite ou les fractions empilées non.
+def _task_ocr(image_bytes: bytes, suffix: str):
+    """Isolé dans son propre processus, comme tous les autres calculs (voir
+    run_isolated) — et pour une raison supplémentaire ici, propre à l'OCR :
+    ces deux endpoints étaient déclarés `async def` alors que extract_text /
+    extract_line_candidates sont des fonctions 100% synchrones et lourdes
+    (OpenCV + Tesseract). Sous FastAPI, le code d'un `async def` s'exécute
+    directement sur la boucle d'événements asyncio : un traitement d'image
+    bloquant exécuté là ne bloque pas que CETTE requête, il gèle TOUT le
+    serveur (donc toutes les autres requêtes, même sans rapport, pendant
+    toute la durée du traitement). Les repasser par run_isolated corrige ce
+    gel ET leur donne, comme au reste de l'API, une vraie coupure au bout du
+    délai imparti si une image pathologique faisait ramer OpenCV/Tesseract.
     """
-    content = await image.read()
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Image trop volumineuse (max 8 Mo).")
-
-    with tempfile.NamedTemporaryFile(suffix=Path(image.filename or "upload.png").suffix or ".png") as tmp:
-        tmp.write(content)
+    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
+        tmp.write(image_bytes)
         tmp.flush()
         try:
             raw_text = extract_text(tmp.name, single_line=True)
+        except OcrUnavailableError:
+            raise  # laisser remonter tel quel, distinct d'une simple erreur de lecture
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Lecture de l'image impossible : {e}")
+            raise RuntimeError(f"Lecture de l'image impossible : {e}")
 
     cleaned = clean_text(raw_text)
     parse_error = None
@@ -580,25 +713,45 @@ async def ocr(image: UploadFile = File(...)):
     }
 
 
-@app.post("/api/ocr-page")
-async def ocr_page(image: UploadFile = File(...)):
-    """Pour une photo pleine page (énoncé pas pré-recadré) : détecte toutes les
-    lignes de texte et les classe par vraisemblance d'être l'expression
-    mathématique recherchée (plutôt qu'une consigne ou du texte environnant).
-    Ne choisit jamais à la place de l'utilisateur — renvoie les meilleurs
-    candidats, chacun passé au même nettoyage/parsing que /api/ocr, pour
-    sélection et confirmation côté frontend."""
+@app.post("/api/ocr")
+async def ocr(image: UploadFile = File(...)):
+    """Extrait le texte d'une photo/scan d'énoncé. Renvoie TOUJOURS le texte brut ET
+    une proposition d'expression nettoyée pour confirmation/édition par l'utilisateur
+    côté frontend — jamais envoyé directement au moteur de correction sans validation.
+
+    Limite honnête (voir README) : Tesseract est un OCR généraliste, pas spécialisé
+    maths. Le caractère « ^ » (exposant) est fréquemment mal lu (confondu avec « * »)
+    sur du texte imprimé compact. Une photo nette, texte imprimé sur une seule ligne,
+    fonctionne raisonnablement ; l'écriture manuscrite ou les fractions empilées non.
+    """
     content = await image.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image trop volumineuse (max 8 Mo).")
 
-    with tempfile.NamedTemporaryFile(suffix=Path(image.filename or "upload.png").suffix or ".png") as tmp:
-        tmp.write(content)
+    suffix = Path(image.filename or "upload.png").suffix or ".png"
+    try:
+        return run_isolated(_task_ocr, content, suffix)
+    except OcrUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette image est trop longue à analyser dans le temps imparti.",
+        )
+
+
+def _task_ocr_page(image_bytes: bytes, suffix: str):
+    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
+        tmp.write(image_bytes)
         tmp.flush()
         try:
             candidates = extract_line_candidates(tmp.name)
+        except OcrUnavailableError:
+            raise
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Lecture de l'image impossible : {e}")
+            raise RuntimeError(f"Lecture de l'image impossible : {e}")
 
     enriched = []
     for c in candidates:
@@ -626,17 +779,43 @@ async def ocr_page(image: UploadFile = File(...)):
     }
 
 
+@app.post("/api/ocr-page")
+async def ocr_page(image: UploadFile = File(...)):
+    """Pour une photo pleine page (énoncé pas pré-recadré) : détecte toutes les
+    lignes de texte et les classe par vraisemblance d'être l'expression
+    mathématique recherchée (plutôt qu'une consigne ou du texte environnant).
+    Ne choisit jamais à la place de l'utilisateur — renvoie les meilleurs
+    candidats, chacun passé au même nettoyage/parsing que /api/ocr, pour
+    sélection et confirmation côté frontend."""
+    content = await image.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Image trop volumineuse (max 8 Mo).")
+
+    suffix = Path(image.filename or "upload.png").suffix or ".png"
+    try:
+        return run_isolated(_task_ocr_page, content, suffix)
+    except OcrUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except concurrent.futures.TimeoutError:
+        raise HTTPException(
+            status_code=422,
+            detail="Cette image est trop longue à analyser dans le temps imparti.",
+        )
+
+
+def _task_plot_data_endpoint(req: CorrectionRequest):
+    analysis = analyze(req.function_str)
+    return plot_function_analysis_data(analysis, req.function_str)
+
+
 @app.post("/api/plot-data")
 def plot_data_endpoint(req: CorrectionRequest):
     """Version JSON du graphique (mêmes données que /api/plot, mais pour un
     rendu interactif côté frontend au lieu d'une image PNG statique)."""
-    def _run():
-        analysis = analyze(req.function_str)
-        return plot_function_analysis_data(analysis, req.function_str)
-
     try:
-        future = _executor.submit(_run)
-        data = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        data = run_isolated(_task_plot_data_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:
@@ -647,15 +826,15 @@ def plot_data_endpoint(req: CorrectionRequest):
     return data
 
 
+def _task_plot_endpoint(req: CorrectionRequest):
+    analysis = analyze(req.function_str)
+    return plot_function_analysis_bytes(analysis, req.function_str)
+
+
 @app.post("/api/plot")
 def plot_endpoint(req: CorrectionRequest):
-    def _run():
-        analysis = analyze(req.function_str)
-        return plot_function_analysis_bytes(analysis, req.function_str)
-
     try:
-        future = _executor.submit(_run)
-        png_bytes = future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        png_bytes = run_isolated(_task_plot_endpoint, req)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except concurrent.futures.TimeoutError:

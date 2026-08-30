@@ -1,0 +1,286 @@
+===============================================================================
+IVERSEN SCIENTIFIC — GUIDE D'INSTALLATION ET DE COMPILATION
+(dépendances -> lancement -> .exe Windows -> .dmg Mac -> .apk Android)
+===============================================================================
+
+À LIRE AVANT TOUT — CE QUE CE GUIDE PEUT ET NE PEUT PAS FAIRE
+-------------------------------------------------------------------------------
+- Un .exe se compile SUR une machine Windows. Un .dmg se compile SUR un Mac.
+  On ne peut pas fabriquer un .exe depuis un Mac, ni un .dmg depuis Windows,
+  ni l'un ou l'autre depuis ce sandbox Linux où le projet a été développé.
+  => Ce guide te dit exactement quoi faire, mais TU dois lancer les commandes
+     sur la machine correspondante (ou demander à quelqu'un qui en a une).
+
+- Un .apk Android, c'est différent des deux autres : ce n'est pas une simple
+  "compilation" du projet actuel. L'application aujourd'hui est un serveur
+  Python (FastAPI) + une page web (HTML/JS). Pour en faire une vraie appli
+  Android installable, il y a deux chemins honnêtes, expliqués en détail
+  dans la PARTIE 4 :
+    - Chemin rapide (recommandé) : PWA (Progressive Web App) — pas un vrai
+      .apk, mais une icône installable sur le téléphone, en quelques minutes.
+    - Chemin complet : réécrire l'interface en Flutter, qui parlera à ton
+      serveur Python. C'est un vrai projet à part entière, pas une commande
+      à copier-coller. Le guide d'installation de Flutter est fourni
+      étape par étape, mais la suite (rebrancher l'appli dessus) reste un
+      travail de développement à faire ensuite.
+
+===============================================================================
+PARTIE 1 — INSTALLER LES DÉPENDANCES ET LANCER L'APPLICATION (rappel)
+===============================================================================
+
+1.1 Prérequis
+-------------------------------------------------------------------------------
+- Python 3.10 ou plus récent : https://www.python.org/downloads/
+  (coche bien "Add Python to PATH" pendant l'installation sous Windows)
+- Tesseract OCR (pour la lecture de photos d'énoncés) :
+    Windows : https://github.com/UB-Mannheim/tesseract/wiki (installeur .exe)
+    macOS   : brew install tesseract   (nécessite Homebrew : https://brew.sh)
+    Linux   : sudo apt install tesseract-ocr
+
+1.2 Lancer l'application (le plus simple)
+-------------------------------------------------------------------------------
+Depuis le dossier du projet (iversen_engine/) :
+
+    python3 start.py
+
+Ce script crée automatiquement un environnement virtuel, installe tout ce
+qu'il faut (voir requirements.txt), démarre le serveur et ouvre le navigateur.
+Voir GUIDE_DEMARRAGE.md pour le détail pas à pas si besoin.
+
+1.3 Installation manuelle (si tu préfères comprendre chaque étape)
+-------------------------------------------------------------------------------
+    cd iversen_engine
+    python3 -m venv .venv
+    source .venv/bin/activate        # Windows : .venv\Scripts\activate
+    pip install -r requirements.txt
+    uvicorn app:app --host 127.0.0.1 --port 8000
+
+Puis ouvrir http://localhost:8000 dans le navigateur.
+
+===============================================================================
+PARTIE 2 — COMPILER EN .EXE (WINDOWS)
+===============================================================================
+
+Outil utilisé : PyInstaller (le plus simple et le plus utilisé pour ça).
+À FAIRE SUR UNE MACHINE WINDOWS.
+
+2.1 Installer les outils
+-------------------------------------------------------------------------------
+    cd iversen_engine
+    python -m venv .venv
+    .venv\Scripts\activate
+    pip install -r requirements.txt
+    pip install pyinstaller
+
+2.2 Créer un petit fichier de lancement (si pas déjà présent)
+-------------------------------------------------------------------------------
+Crée un fichier "run_desktop.py" à la racine du projet avec ce contenu :
+
+    import threading, webbrowser, time
+    import uvicorn
+    from app import app
+
+    def _open_browser():
+        time.sleep(1.5)
+        webbrowser.open("http://127.0.0.1:8000")
+
+    if __name__ == "__main__":
+        threading.Thread(target=_open_browser, daemon=True).start()
+        uvicorn.run(app, host="127.0.0.1", port=8000)
+
+2.3 Lancer PyInstaller
+-------------------------------------------------------------------------------
+    pyinstaller --name IversenScientific --onefile --add-data "frontend;frontend" run_desktop.py
+
+Remarques importantes :
+- "frontend;frontend" (avec un point-virgule) est la syntaxe Windows pour dire
+  "inclus ce dossier tel quel dans le paquet final". Sur Mac/Linux ce serait
+  "frontend:frontend" (deux-points).
+- Tesseract N'EST PAS inclus dans le .exe : c'est un programme externe. Il
+  faudra soit demander à l'utilisateur final de l'installer séparément (voir
+  1.1), soit (plus avancé) inclure le dossier d'installation de Tesseract à
+  côté de l'exécutable et adapter le chemin dans ocr/reader.py.
+- Le résultat apparaît dans dist\IversenScientific.exe — un seul fichier,
+  à double-cliquer.
+
+2.4 Tester
+-------------------------------------------------------------------------------
+Double-clique sur dist\IversenScientific.exe : une fenêtre de terminal
+s'ouvre brièvement, puis le navigateur s'ouvre sur l'application.
+
+===============================================================================
+PARTIE 3 — COMPILER EN .DMG (MACOS)
+===============================================================================
+
+À FAIRE SUR UN MAC. Deux étapes : d'abord un .app (l'équivalent Mac d'un
+.exe), puis un .dmg (l'image disque qu'on distribue, avec l'icône "glisser
+vers Applications").
+
+3.1 Installer les outils
+-------------------------------------------------------------------------------
+    cd iversen_engine
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    pip install pyinstaller
+    brew install create-dmg          # nécessite Homebrew (https://brew.sh)
+
+3.2 Créer le même run_desktop.py que dans la PARTIE 2.2
+-------------------------------------------------------------------------------
+
+3.3 Construire le .app avec PyInstaller
+-------------------------------------------------------------------------------
+    pyinstaller --name IversenScientific --windowed --add-data "frontend:frontend" run_desktop.py
+
+Le résultat est dans dist/IversenScientific.app (un vrai paquet Mac).
+
+Remarque : sur Mac aussi, Tesseract est externe (brew install tesseract sur
+la machine de l'utilisateur final, ou dossier embarqué + chemin adapté).
+
+3.4 Empaqueter le .app dans un .dmg présentable
+-------------------------------------------------------------------------------
+    create-dmg \
+      --volname "Iversen Scientific" \
+      --window-size 500 300 \
+      --icon-size 100 \
+      --app-drop-link 380 130 \
+      "dist/IversenScientific.dmg" \
+      "dist/IversenScientific.app"
+
+Le résultat dist/IversenScientific.dmg est le fichier à distribuer : en
+l'ouvrant, l'utilisateur voit l'icône de l'app et un raccourci vers le
+dossier Applications, comme n'importe quel logiciel Mac.
+
+3.5 À propos de la signature Apple (Gatekeeper)
+-------------------------------------------------------------------------------
+Sans compte développeur Apple (99$/an), macOS affichera un avertissement
+"développeur non identifié" à la première ouverture. L'utilisateur peut
+quand même l'ouvrir via clic droit -> Ouvrir -> Ouvrir quand même. C'est une
+limite normale pour un usage personnel/petit cercle, pas un bug du projet.
+
+===============================================================================
+PARTIE 4 — ANDROID (.APK)
+===============================================================================
+
+4.1 Pourquoi ce n'est pas juste "une troisième compilation"
+-------------------------------------------------------------------------------
+Un .exe et un .dmg empaquettent le MÊME programme (serveur Python + page
+web) pour qu'il tourne sur l'ordinateur qui l'ouvre. Android ne fonctionne
+pas pareil : on n'y fait normalement pas tourner un serveur Python en
+arrière-plan de la même façon, et Google Play attend une vraie application
+native (Java/Kotlin ou Flutter/Dart), pas un dossier Python.
+
+Deux chemins honnêtes :
+
+CHEMIN RAPIDE — PWA (Progressive Web App), recommandé pour commencer
+-------------------------------------------------------------------------------
+Le serveur Python continue de tourner sur UN ordinateur (le tien, ou un
+Raspberry Pi, ou un petit serveur) sur ton réseau local. Le téléphone s'y
+connecte par le navigateur, puis "installe" un raccourci qui ressemble à
+une vraie appli (icône sur l'écran d'accueil, plein écran, pas de barre
+d'adresse). Ce n'est pas un .apk à proprement parler, mais ça marche dès
+aujourd'hui, sans rien recompiler :
+  1. Ouvrir http://ADRESSE_IP_DU_PC:8000 dans Chrome sur le téléphone
+     (le PC et le téléphone doivent être sur le même Wi-Fi)
+  2. Menu Chrome (⋮) -> "Ajouter à l'écran d'accueil" / "Installer l'appli"
+  3. Une icône apparaît, cliquable comme une vraie appli
+Limite : il faut que le PC-serveur soit allumé et sur le même réseau.
+
+CHEMIN COMPLET — Réécriture en Flutter (vrai .apk, gros projet)
+-------------------------------------------------------------------------------
+Ici, on RÉÉCRIT l'interface (pas le moteur de calcul) en Flutter/Dart, qui
+appelle ton API FastAPI existante (les endpoints /api/... ne changent pas).
+Le backend Python devrait alors tourner sur un serveur accessible depuis le
+téléphone (un petit serveur chez toi, ou un hébergement en ligne) — sauf si
+tu vas plus loin encore et embarques Python directement dans l'app Android
+via un outil comme Chaquopy, ce qui est nettement plus avancé.
+
+C'est un vrai projet de développement, pas une commande à lancer. Mais
+puisque tu as demandé l'installation de Flutter en détail, la voici :
+
+4.2 Installer Flutter, étape par étape
+-------------------------------------------------------------------------------
+
+--- SUR WINDOWS ---
+1. Télécharger le SDK Flutter (zip) :
+   https://docs.flutter.dev/get-started/install/windows
+2. Extraire le zip, par exemple dans C:\src\flutter
+   (PAS dans "Program Files" : évite les espaces et droits admin dans le
+   chemin, ça cause des soucis)
+3. Ajouter Flutter au PATH :
+   - Rechercher "variables d'environnement" dans le menu Windows
+   - Modifier la variable "Path" de ton compte -> Nouveau
+   - Ajouter : C:\src\flutter\bin
+   - Valider, puis rouvrir tous les terminaux ouverts
+4. Vérifier : ouvrir un nouveau terminal (PowerShell) et taper :
+       flutter --version
+5. Installer Android Studio (nécessaire pour le SDK Android et un émulateur) :
+   https://developer.android.com/studio
+6. Lancer le diagnostic Flutter :
+       flutter doctor
+   Il liste ce qu'il manque encore (licences Android à accepter, etc.) et
+   donne la commande exacte pour chaque manque, par exemple :
+       flutter doctor --android-licenses
+
+--- SUR MACOS ---
+1. Télécharger le SDK Flutter :
+   https://docs.flutter.dev/get-started/install/macos
+2. Extraire l'archive, par exemple dans ~/development/flutter
+3. Ajouter au PATH (dans ~/.zshrc, le shell par défaut sur Mac récent) :
+       export PATH="$PATH:$HOME/development/flutter/bin"
+   Puis : source ~/.zshrc
+4. Vérifier :
+       flutter --version
+5. Installer Xcode depuis l'App Store (nécessaire même pour Android, car
+   certains outils de compilation Flutter en dépendent sur Mac) puis :
+       sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+       sudo xcodebuild -runFirstLaunch
+6. Installer Android Studio : https://developer.android.com/studio
+7. Lancer :
+       flutter doctor
+   et suivre les instructions affichées (licences Android, composants
+   manquants, etc.) jusqu'à ce que tout soit coché vert.
+
+--- SUR LINUX (Ubuntu/Debian) ---
+1. Télécharger le SDK Flutter :
+   https://docs.flutter.dev/get-started/install/linux
+2. Extraire, par exemple dans ~/development/flutter
+3. Ajouter au PATH (dans ~/.bashrc) :
+       export PATH="$PATH:$HOME/development/flutter/bin"
+   Puis : source ~/.bashrc
+4. Installer les dépendances système demandées par Flutter :
+       sudo apt-get update
+       sudo apt-get install -y curl git unzip xz-utils zip libglu1-mesa
+5. Installer Android Studio (pour le SDK Android) :
+   https://developer.android.com/studio
+6. Vérifier :
+       flutter doctor
+   et corriger chaque point signalé (accepter les licences Android avec
+   flutter doctor --android-licenses, etc.)
+
+4.3 Une fois "flutter doctor" tout vert
+-------------------------------------------------------------------------------
+Créer un nouveau projet Flutter :
+    flutter create iversen_mobile
+    cd iversen_mobile
+    flutter run          # lance sur un émulateur ou un téléphone branché
+
+À partir de là commence le vrai travail : construire les écrans Flutter qui
+appellent les endpoints déjà existants de l'API (/api/correct,
+/api/solve-equation, /api/plot-data, /api/history, etc. — ils n'ont pas
+besoin de changer). Génération du .apk final une fois l'appli prête :
+    flutter build apk --release
+Le fichier apparaît dans build/app/outputs/flutter-apk/app-release.apk.
+
+===============================================================================
+RÉSUMÉ RAPIDE
+===============================================================================
+  .exe (Windows) : PyInstaller, sur une machine Windows           -> PARTIE 2
+  .dmg (macOS)   : PyInstaller + create-dmg, sur un Mac           -> PARTIE 3
+  Android rapide : PWA (installer via Chrome, rien à compiler)    -> PARTIE 4.1
+  Android complet: Flutter (vrai .apk, projet de développement)   -> PARTIE 4.2-4.3
+
+Aucune de ces trois cibles ne peut être produite depuis le sandbox où ce
+projet a été développé — chacune doit être compilée sur la machine
+correspondante. Ce guide donne les commandes exactes pour le faire toi-même.
+===============================================================================

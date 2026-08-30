@@ -5,6 +5,8 @@ définie (aire algébrique entre a et b) pour une fonction f(x).
 from dataclasses import dataclass
 from typing import Optional
 import sympy as sp
+from sympy import S, Interval
+from sympy.calculus.util import continuous_domain
 from .equations import x, normalize_variable_case, parse_math_expression
 
 
@@ -43,6 +45,33 @@ def analyze_integral(function_str: str, a_str: Optional[str] = None, b_str: Opti
             b_val = parse_math_expression(normalize_variable_case(b_str), {"x": x})
         except (sp.SympifyError, TypeError, SyntaxError) as e:
             raise ValueError(f"Bornes illisibles. Détail : {e}")
+
+        # Garde-fou essentiel : le théorème fondamental de l'analyse ne
+        # s'applique que si f est continue (donc définie) sur TOUT le segment
+        # [a, b]. Sans ce contrôle, appliquer F(b) - F(a) sur une fonction qui
+        # a une discontinuité entre a et b (ex: 1/x entre -1 et 1) produit un
+        # résultat sans aucun sens mathématique (ex: un nombre complexe pour
+        # une "aire" réelle) et induirait l'élève en erreur.
+        try:
+            lo, hi = sp.Min(a_val, b_val), sp.Max(a_val, b_val)
+            domain = continuous_domain(f, x, S.Reals)
+            if not Interval(lo, hi).is_subset(domain):
+                raise ValueError(
+                    "f n'est pas continue sur tout le segment "
+                    f"[{sp.nsimplify(lo)} ; {sp.nsimplify(hi)}] (elle n'y est même "
+                    "pas toujours définie) : le théorème fondamental de l'analyse "
+                    "ne s'applique pas directement ici. Il s'agirait d'une "
+                    "intégrale impropre, dont l'étude de convergence dépasse ce "
+                    "module."
+                )
+        except ValueError:
+            raise
+        except Exception:
+            # Le test de continuité peut échouer sur des bornes/fonctions trop
+            # exotiques (paramètres symboliques...) ; dans ce cas on ne bloque
+            # pas inutilement un calcul par ailleurs valide.
+            pass
+
         try:
             value = sp.simplify(primitive.subs(x, b_val) - primitive.subs(x, a_val))
         except Exception as e:

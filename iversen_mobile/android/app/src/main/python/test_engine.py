@@ -233,6 +233,71 @@ def test_ocr_page_mode_ranks_the_exercise_line_first():
     assert candidates[0]["score"] > candidates[1]["score"]
 
 
+# --- Endpoints /api/ocr et /api/ocr-page ---
+# Ajoutés en même temps que le passage de ces deux endpoints par run_isolated
+# (ils étaient déclarés `async def` mais exécutaient du code 100% synchrone et
+# lourd — OpenCV + Tesseract — directement sur la boucle d'événements asyncio,
+# ce qui gelait TOUT le serveur, pas seulement la requête OCR en cours, le
+# temps du traitement). Ces tests vérifient que le résultat traverse
+# correctement la frontière process (sérialisation) et que les erreurs
+# restent des réponses HTTP propres, pas des 500 bruts.
+
+def test_api_ocr_endpoint_smoke():
+    from PIL import Image, ImageDraw, ImageFont
+    from fastapi.testclient import TestClient
+    from app import app
+    import io
+
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 48)
+    img = Image.new("RGB", (500, 120), "white")
+    draw = ImageDraw.Draw(img)
+    draw.text((20, 30), "f(x) = 2x + 1", fill="black", font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    client = TestClient(app)
+    r = client.post("/api/ocr", files={"image": ("test.png", buf, "image/png")})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["suggested_function_str"] == "2*x + 1"
+    assert data["parse_error"] is None
+
+
+def test_api_ocr_rejects_unreadable_image_cleanly():
+    from fastapi.testclient import TestClient
+    from app import app
+
+    client = TestClient(app)
+    # Un fichier .png qui n'est en réalité pas une image valide : doit renvoyer
+    # une erreur HTTP propre (422), jamais un 500 brut.
+    r = client.post("/api/ocr", files={"image": ("test.png", b"ceci n'est pas une image", "image/png")})
+    assert r.status_code == 422
+    assert "detail" in r.json()
+
+
+def test_api_ocr_page_endpoint_smoke():
+    from PIL import Image, ImageDraw, ImageFont
+    from fastapi.testclient import TestClient
+    from app import app
+    import io
+
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+    img = Image.new("RGB", (900, 200), "white")
+    draw = ImageDraw.Draw(img)
+    draw.text((30, 20), "Exercice 3 : etudier la fonction suivante.", fill="black", font=font)
+    draw.text((30, 100), "f(x) = 2x + 1", fill="black", font=font)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    client = TestClient(app)
+    r = client.post("/api/ocr-page", files={"image": ("test.png", buf, "image/png")})
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["candidates"]) >= 1
+
+
 def _make_realistic_notebook_photo(path: str) -> None:
     """Génère une photo de cahier synthétique dégradée : papier quadrillé, éclairage
     inégal (gradient), légère rotation et flou — pour tester le pipeline OCR dans des
@@ -396,23 +461,22 @@ def test_inequality_correction_subject_line():
 
 def test_system_unique_solution():
     from engine import solve_system
-    from engine.systems import x as sys_x, y as sys_y
-    a = solve_system("2*x + y = 5", "x - y = 1")
+    from engine.systems import _ALL_SYMBOLS
+    a = solve_system(["2*x + y = 5", "x - y = 1"])
     assert a.kind == "unique"
-    x_val = a.other_value if a.other_variable == sys_x else a.substitution_value
-    y_val = a.other_value if a.other_variable == sys_y else a.substitution_value
-    assert x_val == 2 and y_val == 1
+    assert a.solution[_ALL_SYMBOLS["x"]] == 2
+    assert a.solution[_ALL_SYMBOLS["y"]] == 1
 
 
 def test_system_no_solution_parallel_lines():
     from engine import solve_system
-    a = solve_system("2*x + y = 5", "2*x + y = 3")
+    a = solve_system(["2*x + y = 5", "2*x + y = 3"])
     assert a.kind == "aucune"
 
 
 def test_system_infinite_solutions_same_line():
     from engine import solve_system
-    a = solve_system("2*x + y = 5", "4*x + 2*y = 10")
+    a = solve_system(["2*x + y = 5", "4*x + 2*y = 10"])
     assert a.kind == "infinité"
     assert a.general_solution is not None
     assert "y = y" not in a.general_solution  # pas d'artefact cosmétique
@@ -420,8 +484,8 @@ def test_system_infinite_solutions_same_line():
 
 def test_system_correction_verification_checks_out():
     from engine import solve_system, write_system_correction
-    a = solve_system("2*x + y = 5", "x - y = 1")
-    c = write_system_correction("t", "2*x + y = 5", "x - y = 1", a)
+    a = solve_system(["2*x + y = 5", "x - y = 1"])
+    c = write_system_correction("t", ["2*x + y = 5", "x - y = 1"], a)
     verif_step = next(s for s in c.steps if s.title == "Vérification")
     assert "0 = 0" in verif_step.result_latex.replace(" ", "") or verif_step.result_latex.count("= 0") == 2
 
@@ -430,14 +494,14 @@ def test_system_rejects_nonlinear_equation():
     from engine.systems import solve_system as raw_solve
     import pytest
     with pytest.raises(ValueError):
-        raw_solve("x**2 + y = 5", "x - y = 1")
+        raw_solve(["x**2 + y = 5", "x - y = 1"])
 
 
 def test_system_rejects_equation_without_equals():
     from engine.systems import solve_system as raw_solve
     import pytest
     with pytest.raises(ValueError):
-        raw_solve("2*x + y", "x - y = 1")
+        raw_solve(["2*x + y", "x - y = 1"])
 
 
 # --- Suites définies par récurrence ---
@@ -1043,7 +1107,7 @@ def test_api_full_surface_smoke_test():
     r = client.post("/api/solve-inequality", json={"inequality_str": "x**2 - 5*x + 6 > 0"})
     assert r.status_code == 200 and "steps" in r.json()
 
-    r = client.post("/api/solve-system", json={"equation1_str": "2*x + y = 5", "equation2_str": "x - y = 1"})
+    r = client.post("/api/solve-system", json={"equations": ["2*x + y = 5", "x - y = 1"]})
     assert r.status_code == 200 and "steps" in r.json()
 
     r = client.post("/api/analyze-sequence", json={"first_term_str": "2", "recurrence_str": "u + 3"})
@@ -1153,7 +1217,7 @@ def test_pdf_export_all_exercise_types(tmp_path):
         "function": write_correction("t", "x**3 - 3*x + 2", analyze("x**3 - 3*x + 2")),
         "equation": write_equation_correction("t", "x**2 - 5*x + 6 = 0", solve_equation("x**2 - 5*x + 6 = 0")),
         "inequality": write_inequality_correction("t", "x**2 - 5*x + 6 > 0", solve_inequality("x**2 - 5*x + 6 > 0")),
-        "system": write_system_correction("t", "2*x + y = 5", "x - y = 1", solve_system("2*x + y = 5", "x - y = 1")),
+        "system": write_system_correction("t", ["2*x + y = 5", "x - y = 1"], solve_system(["2*x + y = 5", "x - y = 1"])),
         "sequence": write_sequence_correction("t", "1", "2*u + 3", analyze_sequence("1", "2*u + 3")),
         "binomial": write_binomial_correction("t", 5, "1/3", 2, analyze_binomial(5, "1/3", 2)),
     }
@@ -1208,7 +1272,7 @@ def test_docx_export_all_exercise_types(tmp_path):
         "function": write_correction("t", "x**3 - 3*x + 2", analyze("x**3 - 3*x + 2")),
         "equation": write_equation_correction("t", "x**2 - 5*x + 6 = 0", solve_equation("x**2 - 5*x + 6 = 0")),
         "inequality": write_inequality_correction("t", "x**2 - 5*x + 6 > 0", solve_inequality("x**2 - 5*x + 6 > 0")),
-        "system": write_system_correction("t", "2*x + y = 5", "x - y = 1", solve_system("2*x + y = 5", "x - y = 1")),
+        "system": write_system_correction("t", ["2*x + y = 5", "x - y = 1"], solve_system(["2*x + y = 5", "x - y = 1"])),
         "sequence": write_sequence_correction("t", "1", "2*u + 3", analyze_sequence("1", "2*u + 3")),
         "binomial": write_binomial_correction("t", 5, "1/3", 2, analyze_binomial(5, "1/3", 2)),
     }
@@ -1386,6 +1450,141 @@ def test_history_clear_removes_everything(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["deleted_count"] == 3
     assert client.get("/api/history").json()["entries"] == []
+
+
+# --- Intégrales ---
+# Il n'existait auparavant AUCUN test sur ce module : c'est ce qui a permis à
+# deux bugs de passer inaperçus (voir engine/integrals.py et
+# engine/writer_integrals.py) : (1) F(b) et F(a) n'étaient en réalité jamais
+# substitués numériquement dans le texte de l'étape « théorème fondamental de
+# l'analyse » à cause d'un symbole x recréé sans l'attribut real=True — donc
+# différent de celui utilisé pour calculer la primitive — et (2) aucune
+# vérification que f est bien continue sur [a, b] avant d'appliquer le
+# théorème, ce qui pouvait produire un résultat absurde (ex: un nombre
+# complexe) pour une intégrale mal posée comme 1/x entre -1 et 1.
+
+def test_integral_indefinite_primitive():
+    from engine.integrals import analyze_integral, x
+    a = analyze_integral("x**2")
+    assert not a.is_definite
+    assert sp.simplify(sp.diff(a.primitive, x) - x**2) == 0
+
+
+def test_integral_definite_value_and_substitution_step():
+    from engine.integrals import analyze_integral
+    from engine.writer_integrals import write_integral_correction
+    a = analyze_integral("x**2", "0", "2")
+    assert a.is_definite
+    assert a.value == sp.Rational(8, 3)
+    # Régression : l'étape affichée doit contenir la valeur numérique de F(2)
+    # et F(0) réellement substituées, pas la primitive symbolique inchangée.
+    c = write_integral_correction("t", "x**2", a)
+    ftc_step = next(s for s in c.steps if "théorème fondamental" in s.title.lower())
+    assert "F(2) - F(0)" in ftc_step.result_latex
+    assert "\\frac{8}{3}" in ftc_step.result_latex
+
+
+def test_integral_rejects_discontinuous_interval():
+    from engine.integrals import analyze_integral
+    import pytest
+    with pytest.raises(ValueError):
+        analyze_integral("1/x", "-1", "1")
+
+
+def test_integral_allows_interval_avoiding_discontinuity():
+    from engine.integrals import analyze_integral
+    a = analyze_integral("1/x", "1", "2")
+    assert a.value == sp.log(2)
+
+
+def test_api_analyze_integral_smoke():
+    from fastapi.testclient import TestClient
+    from app import app
+    client = TestClient(app)
+    r = client.post("/api/analyze-integral", json={
+        "function_str": "x**2", "a_str": "0", "b_str": "2", "exercise_title": "t",
+    })
+    assert r.status_code == 200
+    r2 = client.post("/api/analyze-integral", json={
+        "function_str": "1/x", "a_str": "-1", "b_str": "1", "exercise_title": "t",
+    })
+    assert r2.status_code == 400
+
+
+def test_app_and_ocr_survive_missing_cv2_and_pytesseract(tmp_path):
+    """Simule le build Android (Chaquopy) où cv2/pytesseract ne sont PAS
+    installés — c'est le cas réel là-bas (voir ocr/README.md), pas une
+    hypothèse en l'air. On ne peut pas faire tourner un vrai émulateur
+    Android ici, mais on peut reproduire fidèlement la condition qui a
+    provoqué le bug : ces deux paquets absents de l'environnement Python.
+
+    On le fait en plaçant des faux modules `cv2.py` / `pytesseract.py` (qui
+    lèvent ImportError) plus tôt dans le PYTHONPATH d'un sous-processus frais,
+    pour masquer les vrais paquets installés dans CET environnement de test —
+    sans quoi le cache d'import de pytest verrait toujours les vrais paquets.
+
+    Avant correction, cela faisait planter l'import de ocr/reader.py, donc de
+    tout app.py (qui l'importe en tête de fichier), donc TOUTE l'application
+    — pas seulement l'OCR. Ce test vérifie que ce n'est plus le cas : app.py
+    s'importe et répond toujours normalement, et les endpoints OCR renvoient
+    une 503 explicite au lieu de faire planter tout le serveur.
+    """
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    fake_pkgs = tmp_path / "fake_pkgs"
+    fake_pkgs.mkdir()
+    (fake_pkgs / "cv2.py").write_text(
+        "raise ImportError('cv2 non disponible (simulation build Android)')\n"
+    )
+    (fake_pkgs / "pytesseract.py").write_text(
+        "raise ImportError('pytesseract non disponible (simulation build Android)')\n"
+    )
+
+    script = textwrap.dedent("""
+        import sys
+        sys.path.insert(0, sys.argv[1])  # faux cv2/pytesseract AVANT les vrais
+
+        from ocr.reader import OCR_AVAILABLE, extract_text
+        from ocr import OcrUnavailableError
+        assert OCR_AVAILABLE is False, "OCR_AVAILABLE aurait du etre False"
+
+        try:
+            extract_text("peu importe, ne doit meme pas ouvrir le fichier")
+            print("ERREUR : extract_text() aurait du lever OcrUnavailableError")
+            sys.exit(1)
+        except OcrUnavailableError:
+            pass
+
+        # app.py doit s'importer SANS planter (c'etait le vrai bug), et le
+        # reste de l'app (sans rapport avec l'OCR) doit continuer a marcher.
+        from fastapi.testclient import TestClient
+        from app import app
+        client = TestClient(app)
+
+        r = client.get("/api/health")
+        assert r.status_code == 200
+        assert r.json()["ocr"] is None
+
+        r2 = client.post("/api/correct", json={"function_str": "x**2"})
+        assert r2.status_code == 200
+
+        r3 = client.post("/api/ocr", files={"image": ("t.png", b"peu importe", "image/png")})
+        assert r3.status_code == 503
+
+        print("OK")
+    """)
+
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(fake_pkgs)],
+        cwd=Path(__file__).parent, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"echec de la simulation build Android :\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "OK" in result.stdout
 
 
 if __name__ == "__main__":

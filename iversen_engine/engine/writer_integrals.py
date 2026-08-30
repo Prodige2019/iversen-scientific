@@ -2,7 +2,7 @@
 Rédacteur pédagogique pour le calcul de primitives et d'intégrales définies.
 """
 import sympy as sp
-from .integrals import IntegralAnalysis
+from .integrals import IntegralAnalysis, x
 from .models import Correction, Step
 
 
@@ -38,8 +38,8 @@ def write_integral_correction(exercise_title: str, function_str: str, analysis: 
     ))
 
     if analysis.is_definite:
-        fb = analysis.primitive.subs(sp.Symbol("x"), analysis.b)
-        fa = analysis.primitive.subs(sp.Symbol("x"), analysis.a)
+        fb = analysis.primitive.subs(x, analysis.b)
+        fa = analysis.primitive.subs(x, analysis.a)
         correction.add(Step(
             title="Application du théorème fondamental de l'analyse",
             result_latex=(
