@@ -409,6 +409,55 @@ def test_equation_correction_subject_line_not_mislabeled_as_function():
     assert c.subject_line == "Équation : 2*x + 4 = 0"
 
 
+def test_equation_radical_filters_extraneous_solution():
+    """sqrt(x+2) = x : l'élévation au carré introduit x=-1, qui ne vérifie pas
+    l'équation d'origine (sqrt(1)=1 != -1) et ne doit donc pas apparaître dans
+    l'ensemble des solutions retenues — seule x=2 est valide."""
+    from engine import solve_equation
+    a = solve_equation("sqrt(x+2) = x")
+    assert a.kind == "avec racine"
+    assert a.solutions == [2]
+    assert -1 not in a.solutions
+
+
+def test_equation_radical_rejection_mechanism_catches_extraneous_candidate():
+    """Vérifie directement le filtre de solutions étrangères : un candidat qui ne
+    vérifie pas l'équation d'origine doit être classé en rejected_solutions, pas
+    en solutions valides."""
+    from engine.equations import _solve_radical_equation, x
+    import sympy as sp
+    lhs = sp.sqrt(x + 2)
+    rhs = x
+    normalized = sp.simplify(lhs - rhs)
+    result = _solve_radical_equation(lhs, rhs, normalized)
+    assert result.solutions == [2]
+    # le candidat -1 (issu de l'élévation au carré) ne doit jamais être une solution retenue
+    assert all(s != -1 for s in result.solutions)
+
+
+def test_equation_radical_no_real_solution():
+    from engine import solve_equation
+    a = solve_equation("sqrt(x) = -1")
+    assert a.kind == "avec racine"
+    assert a.solutions == []
+
+
+def test_equation_radical_nth_root():
+    from engine import solve_equation
+    a = solve_equation("x^(1/3) = 2")
+    assert a.kind == "avec racine"
+    assert a.solutions == [8]
+
+
+def test_equation_radical_correction_has_domain_and_verification_steps():
+    from engine import solve_equation, write_equation_correction
+    a = solve_equation("sqrt(2x+1) = x - 1")
+    c = write_equation_correction("t", "sqrt(2x+1) = x - 1", a)
+    titles = [s.title for s in c.steps]
+    assert "Domaine de validité" in titles
+    assert "Ensemble des solutions" in titles
+
+
 # --- Résolution d'inéquations ---
 
 def test_inequality_linear_positive_coefficient():
@@ -421,6 +470,16 @@ def test_inequality_linear_negative_coefficient_flips_direction():
     from engine import solve_inequality
     a = solve_inequality("-2*x + 4 > 0")
     assert a.solution_set == sp.Interval.open(-sp.oo, 2)
+
+
+def test_inequality_radical_domain_and_solution():
+    from engine import solve_inequality, write_inequality_correction
+    a = solve_inequality("sqrt(x+1) < x - 1")
+    assert a.kind == "avec racine"
+    assert a.domain == sp.Interval(-1, sp.oo)
+    assert a.solution_set == sp.Interval.open(3, sp.oo)
+    c = write_inequality_correction("t", "sqrt(x+1) < x - 1", a)
+    assert "Domaine de validité" in [s.title for s in c.steps]
 
 
 def test_inequality_quadratic_positive_discriminant():

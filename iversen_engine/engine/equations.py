@@ -9,8 +9,9 @@ sp.solve() pour les autres types (avec vérification par substitution).
 import re
 from tokenize import TokenError
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import sympy as sp
+from sympy.calculus.util import continuous_domain
 from sympy.parsing.sympy_parser import (
     parse_expr, standard_transformations,
     implicit_multiplication_application, convert_xor,
@@ -58,6 +59,9 @@ class EquationAnalysis:
     discriminant: Optional[sp.Expr] = None
     solutions: List[sp.Expr] = field(default_factory=list)
     solutions_are_complete: bool = True  # False si sp.solve n'a pas trouvé de forme fermée totale
+    # champs spécifiques aux équations avec radical(aux) (kind == "avec racine") :
+    domain: Optional[sp.Set] = None                          # domaine de validité (existence des racines)
+    rejected_solutions: List[Tuple[sp.Expr, str]] = field(default_factory=list)  # (candidate, motif du rejet)
 
 
 def parse_equation(equation_str: str) -> "tuple[sp.Expr, sp.Expr]":
@@ -74,6 +78,72 @@ def parse_equation(equation_str: str) -> "tuple[sp.Expr, sp.Expr]":
     return lhs, rhs
 
 
+def _has_radical(expr: sp.Expr) -> bool:
+    """Détecte la présence d'un radical (racine carrée, cubique, n-ième...) portant
+    sur l'inconnue x : dans SymPy, sqrt(u) et root(u, n) sont tous deux représentés
+    en interne comme Pow(u, p/q) avec un exposant rationnel non entier."""
+    return any(p.exp.is_Rational and p.exp.q != 1 and p.base.has(x) for p in expr.atoms(sp.Pow))
+
+
+def _solve_radical_equation(lhs: sp.Expr, rhs: sp.Expr, normalized: sp.Expr) -> EquationAnalysis:
+    """Équation contenant un ou plusieurs radicaux (ex: √(2x+1) = x-1).
+
+    Méthode : le domaine de validité vient directement de continuous_domain (fiable,
+    déjà utilisé pour l'étude de fonctions) ; la résolution algébrique (élévation au
+    carré / à la puissance n, qui peut introduire des solutions étrangères) est
+    confiée à sp.solve ; chaque candidat est ensuite systématiquement re-vérifié
+    — à la fois dans le domaine ET dans l'équation d'origine (pas la version élevée
+    à une puissance) — avant d'être retenu, exactement comme l'exige la méthode
+    enseignée en classe."""
+    try:
+        domain = continuous_domain(lhs, x, sp.S.Reals).intersect(continuous_domain(rhs, x, sp.S.Reals))
+    except NotImplementedError:
+        domain = sp.S.Reals
+
+    try:
+        raw_candidates = sp.solve(sp.Eq(lhs, rhs), x)
+        complete = True
+    except NotImplementedError:
+        raw_candidates = []
+        complete = False
+
+    accepted: List[sp.Expr] = []
+    rejected: List[Tuple[sp.Expr, str]] = []
+    for s in raw_candidates:
+        if getattr(s, "is_real", None) is False:
+            continue  # candidat non réel : hors périmètre (pas d'équivalent en ℝ)
+        in_domain = domain.contains(s)
+        if in_domain is False:
+            rejected.append((s, "hors du domaine de validité (radicande négatif)"))
+            continue
+        try:
+            checks_out = sp.simplify(lhs.subs(x, s) - rhs.subs(x, s)) == 0
+        except Exception:
+            checks_out = None
+        if checks_out is False:
+            rejected.append((s, "solution étrangère introduite par l'élévation au carré"))
+            continue
+        if checks_out is None:
+            # simplification symbolique inconclusive : dernier recours numérique
+            try:
+                num = complex(lhs.subs(x, s).evalf()) - complex(rhs.subs(x, s).evalf())
+                if abs(num) > 1e-9:
+                    rejected.append((s, "solution étrangère introduite par l'élévation au carré"))
+                    continue
+            except Exception:
+                pass
+        accepted.append(s)
+
+    try:
+        accepted = sorted(accepted, key=lambda s: float(s))
+    except (TypeError, ValueError):
+        pass
+
+    return EquationAnalysis(lhs, rhs, normalized, "avec racine", None, [],
+                             solutions=accepted, solutions_are_complete=complete,
+                             domain=domain, rejected_solutions=rejected)
+
+
 def solve_equation(equation_str: str) -> EquationAnalysis:
     lhs, rhs = parse_equation(equation_str)
     normalized = sp.simplify(lhs - rhs)
@@ -87,6 +157,9 @@ def solve_equation(equation_str: str) -> EquationAnalysis:
     except sp.PolynomialError:
         degree = None
         coeffs = []
+
+    if degree is None and (_has_radical(lhs) or _has_radical(rhs)):
+        return _solve_radical_equation(lhs, rhs, normalized)
 
     if degree == 1:
         kind = "linéaire"
