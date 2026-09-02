@@ -90,6 +90,16 @@ jobs:
         working-directory: iversen_engine/frontend
         run: sed -i.bak "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html && rm -f index.html.bak
 
+      - name: Synchroniser le moteur Python avec iversen_engine (source unique de verite)
+        shell: bash
+        run: |
+          rsync -a --delete \
+            --exclude 'android_entry.py' \
+            --exclude '__pycache__' \
+            --exclude 'icon.ico' \
+            --exclude 'installer.iss' \
+            iversen_engine/ iversen_mobile/android/app/src/main/python/
+
       - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
