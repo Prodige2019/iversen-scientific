@@ -17,7 +17,7 @@ jobs:
       - name: Injecter le numero de version courant
         shell: bash
         working-directory: iversen_engine/frontend
-        run: sed -i "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html
+        run: sed -i.bak "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html && rm -f index.html.bak
 
       - uses: actions/setup-python@v5
         with:
@@ -57,7 +57,7 @@ jobs:
       - name: Injecter le numero de version courant
         shell: bash
         working-directory: iversen_engine/frontend
-        run: sed -i "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html
+        run: sed -i.bak "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html && rm -f index.html.bak
 
       - uses: actions/setup-python@v5
         with:
@@ -88,7 +88,7 @@ jobs:
       - name: Injecter le numero de version courant
         shell: bash
         working-directory: iversen_engine/frontend
-        run: sed -i "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html
+        run: sed -i.bak "s/const CURRENT_VERSION = \"[0-9.]*\";/const CURRENT_VERSION = \"1.0.${{ github.run_number }}\";/" index.html && rm -f index.html.bak
 
       - uses: actions/setup-java@v4
         with:
