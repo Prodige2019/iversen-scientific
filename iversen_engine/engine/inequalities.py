@@ -8,7 +8,8 @@ from tokenize import TokenError
 from dataclasses import dataclass, field
 from typing import List, Optional
 import sympy as sp
-from .equations import x, parse_equation, normalize_variable_case, parse_math_expression
+from sympy.calculus.util import continuous_domain
+from .equations import x, parse_equation, normalize_variable_case, parse_math_expression, _has_radical
 
 
 RELATION_SYMBOLS = {
@@ -31,6 +32,7 @@ class InequalityAnalysis:
     discriminant: Optional[sp.Expr] = None
     roots: List[sp.Expr] = field(default_factory=list)
     solution_set: Optional[sp.Set] = None
+    domain: Optional[sp.Set] = None  # renseigné pour kind == "avec racine" : domaine de validité
 
 
 def _parse_inequality(inequality_str: str):
@@ -64,7 +66,14 @@ def solve_inequality(inequality_str: str) -> InequalityAnalysis:
 
     discriminant = None
     roots: List[sp.Expr] = []
-    if degree == 2:
+    domain = None
+    if degree is None and (_has_radical(lhs) or _has_radical(rhs)):
+        kind = "avec racine"
+        try:
+            domain = continuous_domain(lhs, x, sp.S.Reals).intersect(continuous_domain(rhs, x, sp.S.Reals))
+        except NotImplementedError:
+            domain = sp.S.Reals
+    elif degree == 2:
         kind = "quadratique"
         a, b, c = coeffs
         discriminant = sp.simplify(b**2 - 4*a*c)
@@ -86,4 +95,5 @@ def solve_inequality(inequality_str: str) -> InequalityAnalysis:
         lhs=lhs, rhs=rhs, relop=relop, normalized_expr=normalized_expr,
         kind=kind, degree=degree, coefficients=coeffs,
         discriminant=discriminant, roots=roots, solution_set=solution_set,
+        domain=domain,
     )

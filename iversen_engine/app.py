@@ -1013,6 +1013,7 @@ def inequality_examples():
         {"title": "Quadratique (Δ > 0)", "inequality_str": "x**2 - 5*x + 6 > 0"},
         {"title": "Quadratique (Δ = 0)", "inequality_str": "x**2 - 4*x + 4 <= 0"},
         {"title": "Quadratique (Δ < 0)", "inequality_str": "x**2 + x + 1 > 0"},
+        {"title": "Avec racine carrée", "inequality_str": "sqrt(x + 1) < x - 1"},
     ]
     for e in raw:
         e["display"] = to_display(e["inequality_str"])
@@ -1027,6 +1028,8 @@ def equation_examples():
         {"title": "Quadratique (Δ = 0)", "equation_str": "x**2 - 4*x + 4 = 0"},
         {"title": "Quadratique (Δ < 0)", "equation_str": "x**2 + x + 1 = 0"},
         {"title": "Degré 3", "equation_str": "x**3 - 8 = 0"},
+        {"title": "Avec racine carrée", "equation_str": "sqrt(2*x + 1) = x - 1"},
+        {"title": "Avec racine cubique", "equation_str": "x**(1/3) = 2"},
     ]
     for e in raw:
         e["display"] = to_display(e["equation_str"])
@@ -1044,6 +1047,8 @@ def examples():
         {"title": "Logarithme", "function_str": "log(x)"},
         {"title": "Trigonométrique (sinus)", "function_str": "sin(x)"},
         {"title": "Valeur absolue", "function_str": "Abs(x - 2)"},
+        {"title": "Racine carrée au numérateur", "function_str": "sqrt(x)/(x - 1)"},
+        {"title": "Racine carrée au dénominateur", "function_str": "1/sqrt(x - 2)"},
         {"title": "Fonction par morceaux", "function_str": "Piecewise((x**2, x < 1), (2*x - 1, True))"},
     ]
     for e in raw:

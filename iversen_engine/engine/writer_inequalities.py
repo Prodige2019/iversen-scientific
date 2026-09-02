@@ -90,6 +90,30 @@ def write_inequality_correction(exercise_title: str, inequality_str: str, analys
                 explanation="Le discriminant étant négatif, le trinôme n'a pas de racine réelle et garde le signe de a sur tout ℝ.",
                 weight=2.0,
             ))
+    elif analysis.kind == "avec racine":
+        correction.add(Step(
+            title="Domaine de validité",
+            result_latex=f"\\mathcal{{D}} = {_set_to_latex(analysis.domain)}",
+            explanation=(
+                "Une racine carrée (ou n-ième d'indice pair) n'est définie, dans ℝ, que si la "
+                "quantité qu'elle contient est positive ou nulle. Toute solution de l'inéquation "
+                "devra obligatoirement appartenir à cet ensemble de définition."
+            ),
+            rule_recalled="\\sqrt{u(x)} \\text{ est définie ssi } u(x) \\geq 0",
+            weight=1.5,
+        ))
+        correction.add(Step(
+            title="Résolution sur le domaine",
+            result_latex="\\text{élévation à la puissance adaptée, avec conditions de signe}",
+            explanation=(
+                "On isole le radical, puis on élève les deux membres à la puissance qui l'élimine — "
+                "ce qui n'est licite (sans changer le sens de l'inégalité) que sous certaines "
+                "conditions de signe (par ex. « membre de droite ≥ 0 » avant d'élever au carré une "
+                "racine carrée). Ces conditions sont combinées avec le domaine de validité pour "
+                "obtenir l'ensemble solution final."
+            ),
+            weight=2.0,
+        ))
     else:
         correction.add(Step(
             title="Résolution générale",

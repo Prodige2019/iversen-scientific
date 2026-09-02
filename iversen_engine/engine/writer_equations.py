@@ -6,6 +6,7 @@ import sympy as sp
 from sympy import latex
 from .equations import EquationAnalysis, x
 from .models import Correction, Step
+from .set_notation import french_set_latex as _set_to_latex
 
 
 def write_equation_correction(exercise_title: str, equation_str: str, analysis: EquationAnalysis) -> Correction:
@@ -100,6 +101,66 @@ def write_equation_correction(exercise_title: str, equation_str: str, analysis: 
             result_latex=f"\\mathcal{{S}} = {sol_latex}",
             explanation="On récapitule l'ensemble des solutions trouvées.",
             weight=1.5,
+        ))
+
+    elif analysis.kind == "avec racine":
+        correction.add(Step(
+            title="Domaine de validité",
+            result_latex=f"\\mathcal{{D}} = {_set_to_latex(analysis.domain)}",
+            explanation=(
+                "Une racine carrée (ou n-ième d'indice pair) n'est définie, dans ℝ, que si "
+                "la quantité qu'elle contient est positive ou nulle. On détermine donc d'abord "
+                "l'ensemble des valeurs de x pour lesquelles chaque membre de l'équation a un sens : "
+                "toute solution devra obligatoirement appartenir à cet ensemble."
+            ),
+            rule_recalled="\\sqrt{u(x)} \\text{ est définie ssi } u(x) \\geq 0",
+            weight=1.5,
+        ))
+        raw_candidates = analysis.solutions + [c for c, _ in analysis.rejected_solutions]
+        candidates_latex = " \\, ; \\, ".join(latex(s) for s in raw_candidates) if raw_candidates else "\\text{aucun}"
+        correction.add(Step(
+            title="Élévation à la puissance adaptée",
+            result_latex=f"\\text{{candidat(s) : }} {candidates_latex}",
+            explanation=(
+                "On isole le radical puis on élève les deux membres à la puissance qui l'élimine "
+                "(au carré pour une racine carrée, au cube pour une racine cubique, etc.). Cette "
+                "opération n'est pas toujours réversible : elle peut introduire des solutions "
+                "« étrangères » qui ne vérifient pas l'équation de départ — d'où la vérification "
+                "systématique qui suit."
+            ),
+            weight=2.0,
+        ))
+        if analysis.rejected_solutions:
+            rejected_latex = " \\quad ".join(
+                f"x = {latex(s)} \\ (\\text{{{reason}}})" for s, reason in analysis.rejected_solutions
+            )
+            correction.add(Step(
+                title="Vérification : élimination des solutions étrangères",
+                result_latex=rejected_latex,
+                explanation=(
+                    "Chaque candidat doit être réinjecté dans l'équation ORIGINALE (pas dans la "
+                    "version élevée au carré) et vérifier le domaine trouvé plus haut. Les candidats "
+                    "listés ci-contre échouent à ce test et doivent donc être rejetés."
+                ),
+                weight=1.5,
+            ))
+        else:
+            correction.add(Step(
+                title="Vérification",
+                result_latex="\\text{tous les candidats vérifient l'équation d'origine}",
+                explanation="Chaque candidat a été réinjecté dans l'équation de départ : aucune solution étrangère à écarter ici.",
+                weight=1.0,
+            ))
+        sol_latex = (f"\\left\\{{ {' ; '.join(latex(s) for s in analysis.solutions)} \\right\\}}"
+                     if analysis.solutions else "\\varnothing")
+        correction.add(Step(
+            title="Ensemble des solutions",
+            result_latex=f"\\mathcal{{S}} = {sol_latex}",
+            explanation="On récapitule les seules solutions ayant passé la double vérification (domaine + équation d'origine).",
+            weight=1.5,
+            is_complete=analysis.solutions_are_complete,
+            warning=None if analysis.solutions_are_complete else
+                    "SymPy n'a pas garanti l'exhaustivité des solutions pour cette équation : à vérifier manuellement.",
         ))
 
     else:
